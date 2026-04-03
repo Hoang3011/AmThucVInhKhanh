@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="TourGuideApp2.QrGuestFullscreenPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Shell.NavBarIsVisible="False"
+    BackgroundColor="White">
+
+    <Grid RowDefinitions="Auto,*,Auto" Padding="16">
+        <Label
+            x:Name="lblTitle"
+            FontSize="18"
+            FontAttributes="Bold"
+            HorizontalTextAlignment="Center"
+            TextColor="#1E88E5" />
+
+        <VerticalStackLayout Grid.Row="1" VerticalOptions="Center" Spacing="16">
+            <Label
+                FontSize="14"
+                HorizontalTextAlignment="Center"
+                TextColor="#555555"
+                Text="Đưa điện thoại khách lại gần để quét. Tăng độ sáng màn hình nếu cần." />
+            <Image
+                x:Name="imgQrLarge"
+                WidthRequest="280"
+                HeightRequest="280"
+                Aspect="AspectFit"
+                HorizontalOptions="Center" />
+            <Label
+                x:Name="lblPayload"
+                FontSize="12"
+                HorizontalTextAlignment="Center"
+                TextColor="#888888" />
+        </VerticalStackLayout>
+
+        <Button
+            Grid.Row="2"
+            Text="Đóng"
+            Clicked="OnCloseClicked"
+            BackgroundColor="#1E88E5"
+            TextColor="White"
+            CornerRadius="12"
+            Margin="0,8,0,0" />
+    </Grid>
+</ContentPage>

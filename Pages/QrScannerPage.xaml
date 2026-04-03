@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="TourGuideApp2.QrScannerPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:zxing="clr-namespace:ZXing.Net.Maui.Controls;assembly=ZXing.Net.Maui.Controls"
+    Title="Quét QR">
+
+    <Grid RowDefinitions="*,Auto" BackgroundColor="Black">
+        <zxing:CameraBarcodeReaderView
+            x:Name="cameraView"
+            BarcodesDetected="CameraView_BarcodesDetected"
+            IsDetecting="False"
+            IsTorchOn="False" />
+
+        <VerticalStackLayout Grid.Row="1" Padding="16" Spacing="10" BackgroundColor="#CC111111">
+            <Label
+                Text="Đưa mã QR vào giữa khung camera"
+                FontSize="14"
+                HorizontalTextAlignment="Center"
+                TextColor="White" />
+            <Button
+                Text="Hủy"
+                Clicked="OnCancelClicked"
+                BackgroundColor="#E65100"
+                TextColor="White"
+                CornerRadius="12" />
+            <Button
+                Text="Nhập mã thủ công"
+                Clicked="OnManualInputClicked"
+                BackgroundColor="#1E88E5"
+                TextColor="White"
+                CornerRadius="12" />
+        </VerticalStackLayout>
+    </Grid>
+</ContentPage>

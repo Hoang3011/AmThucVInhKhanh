@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#F57C00" />
+  <text x="512" y="470" text-anchor="middle" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="700">
+    Xin chào đến với
+  </text>
+  <text x="512" y="555" text-anchor="middle" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="72" font-weight="700">
+    Phố ẩm thực Vĩnh Khánh
+  </text>
+  <text x="512" y="635" text-anchor="middle" fill="#FFF3E0" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="600">
+    Welcome to Vinh Khanh Food Street
+  </text>
+</svg>

@@ -1,0 +1,145 @@
+<ContentPage
+    x:Class="TourGuideApp2.Pages.HistoryPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:pages="clr-namespace:TourGuideApp2.Pages"
+    Title="Lịch sử">
+
+    <Grid RowDefinitions="Auto,Auto,*" Padding="12">
+        <HorizontalStackLayout Spacing="8">
+            <Button
+                Text="Làm mới"
+                Clicked="OnRefreshClicked"
+                BackgroundColor="#1E88E5"
+                TextColor="White"
+                CornerRadius="10" />
+            <Button
+                Text="Xóa tất cả"
+                Clicked="OnClearAllClicked"
+                BackgroundColor="#E53935"
+                TextColor="White"
+                CornerRadius="10" />
+        </HorizontalStackLayout>
+
+        <Border
+            Grid.Row="1"
+            Margin="0,10,0,0"
+            Stroke="#FFE0B2"
+            StrokeThickness="1"
+            BackgroundColor="#FFF8E1"
+            StrokeShape="RoundRectangle 12"
+            Padding="10">
+            <VerticalStackLayout Spacing="6">
+                <Label
+                    Text="Thống kê nhanh"
+                    FontSize="15"
+                    FontAttributes="Bold"
+                    TextColor="#E65100" />
+                <Label
+                    x:Name="totalCountLabel"
+                    Text="Tổng lượt nghe: 0"
+                    FontSize="13"
+                    TextColor="#333333" />
+                <Label
+                    x:Name="sourceCountLabel"
+                    Text="Theo nguồn: QR 0 | Map 0 | AutoGeo 0 | BusStop 0"
+                    FontSize="13"
+                    TextColor="#333333" />
+                <Label
+                    x:Name="sourceAvgLabel"
+                    Text="TB theo nguồn (giây): QR - | Map - | AutoGeo - | BusStop -"
+                    FontSize="13"
+                    TextColor="#333333" />
+                <Label
+                    x:Name="avgListenTimeLabel"
+                    Text="Thời gian nghe TB (thực tế): Chưa có dữ liệu"
+                    FontSize="13"
+                    TextColor="#333333" />
+                <Label
+                    x:Name="todayCountLabel"
+                    Text="Lượt nghe hôm nay: 0"
+                    FontSize="13"
+                    TextColor="#333333" />
+                <Label
+                    x:Name="topLanguageLabel"
+                    Text="Ngôn ngữ nghe nhiều nhất: -"
+                    FontSize="13"
+                    TextColor="#333333" />
+                <Label Margin="0,4,0,0" FontSize="13" FontAttributes="Bold">
+                    <Label.FormattedText>
+                        <FormattedString>
+                            <Span Text="Top " TextColor="#FF6D00" />
+                            <Span Text="địa điểm " TextColor="#7B1FA2" />
+                            <Span Text="được nghe " TextColor="#00897B" />
+                            <Span Text="nhiều nhất" TextColor="#C62828" />
+                        </FormattedString>
+                    </Label.FormattedText>
+                </Label>
+                <Label
+                    x:Name="topPlacesEmptyLabel"
+                    Text="Chưa có dữ liệu để xếp hạng."
+                    FontSize="12"
+                    TextColor="#888888"
+                    IsVisible="False" />
+                <CollectionView
+                    x:Name="topPlacesList"
+                    SelectionMode="None"
+                    BackgroundColor="Transparent">
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate x:DataType="pages:TopPlaceRow">
+                            <Grid
+                                ColumnDefinitions="28,*,Auto"
+                                Padding="0,4"
+                                ColumnSpacing="8">
+                                <Label
+                                    Text="{Binding RankText}"
+                                    FontSize="13"
+                                    FontAttributes="Bold"
+                                    TextColor="{Binding RankColor}"
+                                    VerticalOptions="Center" />
+                                <Label
+                                    Grid.Column="1"
+                                    Text="{Binding PlaceName}"
+                                    FontSize="13"
+                                    LineBreakMode="TailTruncation"
+                                    TextColor="#212121"
+                                    VerticalOptions="Center" />
+                                <Label
+                                    Grid.Column="2"
+                                    Text="{Binding CountText}"
+                                    FontSize="12"
+                                    TextColor="{Binding CountColor}"
+                                    VerticalOptions="Center" />
+                            </Grid>
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
+            </VerticalStackLayout>
+        </Border>
+
+        <Grid Grid.Row="2">
+            <CollectionView x:Name="historyList" Margin="0,10,0,0">
+                <CollectionView.ItemTemplate>
+                    <DataTemplate>
+                        <Border Stroke="#E0E0E0" StrokeThickness="1" StrokeShape="RoundRectangle 12" Padding="10" Margin="0,0,0,8">
+                            <VerticalStackLayout Spacing="4">
+                                <Label Text="{Binding PlaceName}" FontAttributes="Bold" FontSize="15" />
+                                <Label Text="{Binding SourceLine}" FontSize="12" TextColor="#1565C0" />
+                                <Label Text="{Binding TimeLine}" FontSize="12" TextColor="#666666" />
+                            </VerticalStackLayout>
+                        </Border>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+
+            <Label
+                x:Name="emptyStateLabel"
+                IsVisible="False"
+                HorizontalOptions="Center"
+                VerticalOptions="Center"
+                Text="Chưa có lịch sử nghe/quét."
+                TextColor="#666666" />
+        </Grid>
+    </Grid>
+
+</ContentPage>

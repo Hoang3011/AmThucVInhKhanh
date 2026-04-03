@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="TourGuideApp2.RegisterPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="Đăng ký"
+    BackgroundColor="#F4F7FB">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="20" Spacing="12">
+            <Border BackgroundColor="White"
+                    Stroke="#DCE6F2"
+                    StrokeThickness="1"
+                    StrokeShape="RoundRectangle 14"
+                    Padding="14">
+                <VerticalStackLayout Spacing="12">
+                    <Label Text="Tạo tài khoản khách hàng"
+                           FontSize="24"
+                           FontAttributes="Bold"
+                           TextColor="#0D47A1" />
+                    <Label Text="Đăng ký xong sẽ quay lại màn hình đăng nhập."
+                           FontSize="13"
+                           TextColor="#546E7A" />
+
+                    <Label Text="Họ và tên" FontSize="13" FontAttributes="Bold" TextColor="#1F2937" />
+                    <Entry x:Name="fullNameEntry"
+                           Placeholder="Ví dụ: Nguyễn Văn A"
+                           PlaceholderColor="#94A3B8"
+                           BackgroundColor="#F8FAFC"
+                           TextColor="#111827" />
+
+                    <Label Text="Email hoặc số điện thoại" FontSize="13" FontAttributes="Bold" TextColor="#1F2937" />
+                    <Entry x:Name="accountEntry"
+                           Placeholder="abc@gmail.com hoặc 09xxxxxxxx"
+                           PlaceholderColor="#94A3B8"
+                           BackgroundColor="#F8FAFC"
+                           TextColor="#111827" />
+
+                    <Label Text="Mật khẩu" FontSize="13" FontAttributes="Bold" TextColor="#1F2937" />
+                    <Entry x:Name="passwordEntry"
+                           Placeholder="Tối thiểu 6 ký tự"
+                           PlaceholderColor="#94A3B8"
+                           IsPassword="True"
+                           BackgroundColor="#F8FAFC"
+                           TextColor="#111827" />
+
+                    <Label Text="Xác nhận mật khẩu" FontSize="13" FontAttributes="Bold" TextColor="#1F2937" />
+                    <Entry x:Name="confirmPasswordEntry"
+                           Placeholder="Nhập lại mật khẩu"
+                           PlaceholderColor="#94A3B8"
+                           IsPassword="True"
+                           BackgroundColor="#F8FAFC"
+                           TextColor="#111827" />
+
+                    <HorizontalStackLayout Spacing="10">
+                        <Button Text="Hủy"
+                                Clicked="OnCancelClicked"
+                                BackgroundColor="#90A4AE"
+                                TextColor="White"
+                                CornerRadius="10"
+                                HeightRequest="44" />
+                        <Button Text="Đăng ký"
+                                Clicked="OnSubmitClicked"
+                                BackgroundColor="#FF6200"
+                                TextColor="White"
+                                CornerRadius="10"
+                                HeightRequest="44" />
+                    </HorizontalStackLayout>
+
+                    <Label x:Name="statusLabel"
+                           FontSize="12"
+                           TextColor="#475569" />
+                </VerticalStackLayout>
+            </Border>
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

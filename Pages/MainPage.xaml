@@ -1,0 +1,162 @@
+<ContentPage
+    x:Class="TourGuideApp2.MainPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    BackgroundColor="{StaticResource Background}">
+
+    <ScrollView>
+
+        <VerticalStackLayout Padding="20" Spacing="20">
+
+            <Border
+                BackgroundColor="#FF6200"
+                StrokeShape="RoundRectangle 14"
+                Padding="12,8"
+                HorizontalOptions="Center">
+                <Label
+                    Text="Xin chào phố ẩm thực Vĩnh Khánh"
+                    FontSize="14"
+                    FontAttributes="Bold"
+                    TextColor="White" />
+            </Border>
+
+            <Label
+                Text="📍 Phố Ẩm Thực Vĩnh Khánh"
+                FontSize="28"
+                FontAttributes="Bold"
+                HorizontalOptions="Center"
+                TextColor="{StaticResource Primary}" />
+
+            <Label
+                Text="Ứng dụng thuyết minh tự động"
+                FontSize="18"
+                HorizontalOptions="Center"
+                TextColor="#37474F"/>
+
+            <Label
+                Text="Khám phá thiên đường hải sản tại Quận 4, TP.HCM."
+                FontSize="16"
+                TextColor="#455A64"/>
+
+            <Border
+                BackgroundColor="White"
+                Stroke="#E0E0E0"
+                StrokeThickness="1"
+                Padding="12">
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="Tài khoản khách hàng"
+                           FontAttributes="Bold"
+                           FontSize="18"
+                           TextColor="#0D47A1" />
+                    <Label Text="Đăng nhập để sử dụng các chức năng của ứng dụng."
+                           FontSize="13"
+                           TextColor="#546E7A" />
+
+                    <VerticalStackLayout x:Name="loggedOutPanel" Spacing="10">
+                        <Label Text="Email hoặc số điện thoại" FontSize="13" TextColor="#37474F" />
+                        <Entry x:Name="accountEntry"
+                               Placeholder="Ví dụ: abc@gmail.com hoặc 09xxxxxxxx"
+                               PlaceholderColor="#90A4AE"
+                               TextColor="#263238"
+                               Keyboard="Text"
+                               BackgroundColor="#F5F7FA"
+                               HeightRequest="44" />
+
+                        <Label Text="Mật khẩu" FontSize="13" TextColor="#37474F" />
+                        <Entry x:Name="passwordEntry"
+                               Placeholder="Tối thiểu 6 ký tự"
+                               PlaceholderColor="#90A4AE"
+                               TextColor="#263238"
+                               IsPassword="True"
+                               BackgroundColor="#F5F7FA"
+                               HeightRequest="44" />
+
+                        <HorizontalStackLayout Spacing="8">
+                            <Button Text="Đăng nhập"
+                                    Clicked="OnLoginClicked"
+                                    BackgroundColor="#1E88E5"
+                                    TextColor="White"
+                                    CornerRadius="10"
+                                    HeightRequest="44" />
+                            <Button Text="Đăng ký"
+                                    Clicked="OnOpenRegisterClicked"
+                                    BackgroundColor="#FF6200"
+                                    TextColor="White"
+                                    CornerRadius="10"
+                                    HeightRequest="44" />
+                        </HorizontalStackLayout>
+                    </VerticalStackLayout>
+
+                    <VerticalStackLayout x:Name="loggedInPanel" IsVisible="False" Spacing="8">
+                        <Label x:Name="welcomeUserLabel"
+                               Text="Xin chào, khách hàng!"
+                               FontAttributes="Bold"
+                               TextColor="#2E7D32" />
+                        <Label Text="Bạn đã đăng nhập. Có thể dùng đầy đủ chức năng."
+                               FontSize="13"
+                               TextColor="#546E7A" />
+                        <Label x:Name="accountInfoLabel"
+                               Text="Tài khoản: -"
+                               FontSize="13"
+                               TextColor="#37474F" />
+                        <Label x:Name="createdAtInfoLabel"
+                               Text="Ngày tạo: -"
+                               FontSize="13"
+                               TextColor="#37474F" />
+                        <Button Text="Đăng xuất"
+                                Clicked="OnLogoutClicked"
+                                BackgroundColor="#E53935"
+                                TextColor="White"
+                                CornerRadius="10" />
+                    </VerticalStackLayout>
+
+                    <Label x:Name="authStatusLabel"
+                           FontSize="12"
+                           TextColor="#666666"
+                           LineBreakMode="WordWrap" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border
+                BackgroundColor="White"
+                StrokeThickness="1"
+                Padding="15">
+
+                <VerticalStackLayout>
+
+                    <Label
+                        Text="🦑 Ốc Đào"
+                        FontAttributes="Bold"
+                        FontSize="18"/>
+
+                    <Label
+                        Text="Quán ốc nổi tiếng nhất tại phố ẩm thực Vĩnh Khánh." />
+
+                </VerticalStackLayout>
+
+            </Border>
+
+            <Border
+                BackgroundColor="White"
+                StrokeThickness="1"
+                Padding="15">
+
+                <VerticalStackLayout>
+
+                    <Label
+                        Text="🦐 Hải sản nướng"
+                        FontAttributes="Bold"
+                        FontSize="18"/>
+
+                    <Label
+                        Text="Nhiều quán hải sản tươi sống chế biến tại chỗ." />
+
+                </VerticalStackLayout>
+
+            </Border>
+
+        </VerticalStackLayout>
+
+    </ScrollView>
+
+</ContentPage>

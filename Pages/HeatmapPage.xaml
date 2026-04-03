@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="TourGuideApp2.Pages.HeatmapPage"
+             Title="Heatmap Vị Trí Người Dùng Mô Phỏng">
+
+    <VerticalStackLayout Spacing="10" Padding="10">
+        <Button Text="🔄 Tạo dữ liệu mô phỏng mới" 
+                Command="{Binding GenerateNewDataCommand}"
+                HeightRequest="50" />
+
+        <Label Text="Heatmap khu phố ẩm thực Vĩnh Khánh" 
+               FontSize="Medium" HorizontalOptions="Center" />
+
+        <Label Text="Ưu tiên vẽ từ tuyến đã lưu khi bạn đi trên tab Bản đồ; nếu chưa đủ điểm thì dùng điểm mô phỏng. Dữ liệu cục bộ trên máy, không gửi máy chủ."
+               FontSize="12"
+               TextColor="#666666"
+               HorizontalTextAlignment="Center"
+               HorizontalOptions="Fill"
+               LineBreakMode="WordWrap"
+               Margin="0,0,0,4" />
+
+        <WebView x:Name="mapWebView" 
+                 HeightRequest="700"
+                 HorizontalOptions="Fill"
+                 VerticalOptions="Fill" />
+    </VerticalStackLayout>
+</ContentPage>

@@ -1,0 +1,280 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage 
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    x:Class="TourGuideApp2.MapPage">
+
+    <Grid RowDefinitions="*, Auto">
+
+        <!-- WebView chiếm toàn bộ không gian trên -->
+        <WebView x:Name="mapView"
+             Navigating="MapView_Navigating"
+             VerticalOptions="Fill"
+             HorizontalOptions="Fill"/>
+
+        <Border
+            HorizontalOptions="Center"
+            VerticalOptions="Start"
+            Margin="12,12,12,0"
+            Padding="12,8"
+            BackgroundColor="#FF6200"
+            StrokeShape="RoundRectangle 14"
+            ZIndex="11">
+            <Label
+                Text="Xin chào phố ẩm thực Vĩnh Khánh"
+                FontSize="14"
+                FontAttributes="Bold"
+                TextColor="White" />
+        </Border>
+
+        <!-- Thanh điều khiển giả lập di chuyển - góc dưới trái -->
+        <Border 
+           HorizontalOptions="Start"
+           VerticalOptions="End"
+           StrokeShape="RoundRectangle 16"
+           ZIndex="10"
+        >
+
+            <StackLayout Orientation="Vertical" Spacing="8">
+
+                <Button
+                    Text="📍 Về khu demo"
+                    Clicked="OnJumpToVinhKhanhDemoClicked"
+                    WidthRequest="132"
+                    HeightRequest="42"
+                    FontSize="12"
+                    LineBreakMode="WordWrap"
+                    CornerRadius="12"
+                    BackgroundColor="#E65100"
+                    TextColor="White" />
+                <Button
+                    Text="🧹 Xóa tuyến"
+                    Clicked="OnClearRouteClicked"
+                    WidthRequest="132"
+                    HeightRequest="42"
+                    FontSize="12"
+                    CornerRadius="12"
+                    BackgroundColor="#607D8B"
+                    TextColor="White" />
+
+                <!-- Ở trong phòng: GPS/Fake GPS trên máy thường không đưa được chấm tới quán. Chọn quán = đặt mốc đúng tọa độ quán trong DB (mô phỏng đứng gần đó). -->
+                <Label
+                    Text="Mô phỏng gần quán (trong phòng)"
+                    FontSize="11"
+                    FontAttributes="Bold"
+                    TextColor="#333333"
+                    WidthRequest="200"
+                    Margin="0,6,0,0" />
+                <Label
+                    Text="Chọn tên quán — bản đồ đặt vị trí đúng chỗ quán (không dùng mũi tên)."
+                    FontSize="9"
+                    TextColor="#555555"
+                    WidthRequest="200"
+                    LineBreakMode="WordWrap" />
+                <Picker
+                    x:Name="pickerSimulateNearPoi"
+                    Title="Chọn quán…"
+                    WidthRequest="200"
+                    FontSize="11"
+                    SelectedIndexChanged="OnSimulateNearPoiPickerChanged" />
+
+                <Grid ColumnDefinitions="60,60" 
+                      RowDefinitions="60,60,60"
+                      ColumnSpacing="12"
+                      IsVisible="False">
+                    <Button Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Text="↑" 
+                            Clicked="OnMoveUpClicked" 
+                            WidthRequest="60" HeightRequest="60"
+                            FontSize="24" CornerRadius="30"
+                            BackgroundColor="#FF6200" TextColor="White" />
+
+                    <Button Grid.Row="1" Grid.Column="0" Text="←" 
+                            Clicked="OnMoveLeftClicked" 
+                            WidthRequest="60" HeightRequest="60"
+                            FontSize="24" CornerRadius="30"
+                            BackgroundColor="#FF6200" TextColor="White" />
+
+                    <Button Grid.Row="1" Grid.Column="1" Text="→" 
+                            Clicked="OnMoveRightClicked" 
+                            WidthRequest="60" HeightRequest="60"
+                            FontSize="24" CornerRadius="30"
+                            BackgroundColor="#FF6200" TextColor="White" />
+
+                    <Button Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Text="↓" 
+                            Clicked="OnMoveDownClicked" 
+                            WidthRequest="60" HeightRequest="60"
+                            FontSize="24" CornerRadius="30"
+                            BackgroundColor="#FF6200" TextColor="White" />
+                </Grid>
+
+            </StackLayout>
+        </Border>
+        <Border 
+        HorizontalOptions="End"
+        VerticalOptions="End"
+        StrokeShape="RoundRectangle 30"
+        ZIndex="10"
+      >
+
+            <StackLayout Orientation="Vertical" Spacing="8" x:Name="languagePanel">
+
+                <!-- Danh sách ngôn ngữ (hiện ở trên khi mở) -->
+                <StackLayout x:Name="langOptions" 
+                         IsVisible="false" 
+                         Orientation="Vertical" 
+                         Spacing="6">
+
+                    <Button Text="🇻🇳 Tiếng Việt" 
+                        Clicked="OnSelectVietnameseClicked"
+                        WidthRequest="150" 
+                        HeightRequest="48"
+                        FontSize="15"
+                        CornerRadius="12"
+                        BackgroundColor="#FF6200" 
+                        TextColor="White" />
+
+                    <Button Text="🇬🇧 English" 
+                        Clicked="OnSelectEnglishClicked"
+                        WidthRequest="150" 
+                        HeightRequest="48"
+                        FontSize="15"
+                        CornerRadius="12"
+                        BackgroundColor="#FF6200" 
+                        TextColor="White" />
+                    <Button Text="🇨🇳 汉语" 
+                            Clicked="OnSelectChineseClicked"
+                            WidthRequest="150" 
+                            HeightRequest="48"
+                            FontSize="15"
+                            CornerRadius="12"
+                            BackgroundColor="#FF6200" 
+                            TextColor="White" />
+
+                    <Button Text="🇯🇵 日本語" 
+                            Clicked="OnSelectJapaneseClicked"
+                            WidthRequest="150" 
+                            HeightRequest="48"
+                            FontSize="15"
+                            CornerRadius="12"
+                            BackgroundColor="#FF6200" 
+                            TextColor="White" />
+                </StackLayout>
+
+                <!-- Nút chính (luôn hiển thị) -->
+                <Button x:Name="btnCurrentLang" 
+                    Text="🇻🇳 VI"
+                    Clicked="OnLanguageButtonClicked"
+                    WidthRequest="60" 
+                    HeightRequest="60"
+                    FontSize="22" 
+                    CornerRadius="30"
+                    BackgroundColor="#FF6200" 
+                    TextColor="White" />
+            </StackLayout>
+        </Border>
+
+        <!-- Khối QR xanh: nút + mã QR từng điểm (cùng một vùng, bấm QR để mở/đóng) -->
+        <Border
+            HorizontalOptions="End"
+            VerticalOptions="Start"
+            Margin="12"
+            BackgroundColor="#1E88E5"
+            StrokeShape="RoundRectangle 16"
+            Padding="0"
+            ZIndex="12">
+            <VerticalStackLayout Spacing="0">
+                <Button
+                    x:Name="btnQrToggle"
+                    Text="QR ▼"
+                    Clicked="OnQrToggleClicked"
+                    WidthRequest="56"
+                    HeightRequest="56"
+                    CornerRadius="16"
+                    FontAttributes="Bold"
+                    BackgroundColor="#1E88E5"
+                    TextColor="White" />
+
+                <Border
+                    x:Name="qrNearbyPanel"
+                    IsVisible="False"
+                    BackgroundColor="White"
+                    StrokeShape="RoundRectangle 12"
+                    Margin="8,0,8,8"
+                    Padding="12"
+                    MaximumWidthRequest="280">
+                    <VerticalStackLayout Spacing="10">
+                        <Label
+                            x:Name="lblQrHint"
+                            FontSize="12"
+                            TextColor="#555555"
+                            LineBreakMode="WordWrap" />
+                        <Label
+                            x:Name="lblQrNearbyTitle"
+                            Text="Chọn điểm"
+                            FontAttributes="Bold"
+                            FontSize="14"
+                            TextColor="#1E88E5" />
+                        <Picker
+                            x:Name="pickerPoiForQr"
+                            Title="Chọn quán / điểm thuyết minh"
+                            SelectedIndexChanged="OnPoiQrPickerChanged" />
+                        <HorizontalStackLayout Spacing="6">
+                            <Button
+                                Text="Khánh Hội"
+                                Clicked="OnSelectKhanhHoiQrClicked"
+                                BackgroundColor="#E3F2FD"
+                                TextColor="#0D47A1"
+                                CornerRadius="10"
+                                FontSize="12" />
+                            <Button
+                                Text="Vĩnh Hội"
+                                Clicked="OnSelectVinhHoiQrClicked"
+                                BackgroundColor="#E3F2FD"
+                                TextColor="#0D47A1"
+                                CornerRadius="10"
+                                FontSize="12" />
+                            <Button
+                                Text="Xóm Chiếu"
+                                Clicked="OnSelectXomChieuQrClicked"
+                                BackgroundColor="#E3F2FD"
+                                TextColor="#0D47A1"
+                                CornerRadius="10"
+                                FontSize="12" />
+                        </HorizontalStackLayout>
+                        <Image
+                            x:Name="imgNearbyQr"
+                            WidthRequest="180"
+                            HeightRequest="180"
+                            Aspect="AspectFit"
+                            HorizontalOptions="Center" />
+                        <Label
+                            x:Name="lblNearbyPayload"
+                            FontSize="11"
+                            TextColor="#666666"
+                            LineBreakMode="WordWrap" />
+                        <Button
+                            Text="Khách quét (màn hình lớn)"
+                            Clicked="OnOpenGuestQrFullscreenClicked"
+                            BackgroundColor="#1565C0"
+                            TextColor="White"
+                            CornerRadius="10" />
+                        <HorizontalStackLayout Spacing="8">
+                            <Button
+                                Text="Quét QR (camera)"
+                                Clicked="OnOpenScannerFromPanelClicked"
+                                BackgroundColor="#1E88E5"
+                                TextColor="White"
+                                CornerRadius="10" />
+                            <Button
+                                Text="Đóng"
+                                Clicked="OnCloseNearbyQrPanelClicked"
+                                BackgroundColor="#E0E0E0"
+                                TextColor="#333333"
+                                CornerRadius="10" />
+                        </HorizontalStackLayout>
+                    </VerticalStackLayout>
+                </Border>
+            </VerticalStackLayout>
+        </Border>
+    </Grid>
+</ContentPage>

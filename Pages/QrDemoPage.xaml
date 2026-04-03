@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="TourGuideApp2.QrDemoPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="QR Demo">
+
+    <Grid RowDefinitions="Auto,*" Padding="12">
+        <Label
+            Text="Quét các mã dưới đây để mở đúng quán trên bản đồ."
+            FontSize="14"
+            TextColor="#333333" />
+
+        <CollectionView Grid.Row="1" ItemsSource="{Binding QrItems}" Margin="0,10,0,0">
+            <CollectionView.ItemTemplate>
+                <DataTemplate>
+                    <Border Stroke="#DDDDDD" StrokeThickness="1" StrokeShape="RoundRectangle 12" Padding="10" Margin="0,0,0,10">
+                        <Grid ColumnDefinitions="120,*" ColumnSpacing="12">
+                            <Image
+                                Source="{Binding QrImage}"
+                                WidthRequest="110"
+                                HeightRequest="110"
+                                Aspect="AspectFit" />
+                            <VerticalStackLayout Grid.Column="1" Spacing="6">
+                                <Label Text="{Binding Name}" FontAttributes="Bold" FontSize="16" />
+                                <Label Text="{Binding Payload}" FontSize="12" TextColor="#666666" />
+                                <Label Text="Dùng màn này trên 1 thiết bị, thiết bị khác mở tab Bản đồ và bấm QR để quét."
+                                       FontSize="11"
+                                       TextColor="#888888" />
+                            </VerticalStackLayout>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+    </Grid>
+</ContentPage>
