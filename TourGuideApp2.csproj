@@ -126,7 +126,14 @@
 	  <Folder Include="Platforms\Android\Resources\NewFolder1\" />
 	  <Folder Include="Platforms\Android\Resources\NewFolder\" />
 	</ItemGroup>
-
+	<!-- ====================== LIÊN KẾT DB TỪ CMS (CÁCH ĐÚNG CHO MAUI) ====================== -->
+	<ItemGroup>
+		<!-- Copy VinhKhanh.db từ thư mục CMS (sibling folder) -->
+		<MauiAsset Include="..\TourGuideCMS\App_Data\VinhKhanh.db"
+		            Link="VinhKhanh.db">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</MauiAsset>
+	</ItemGroup>
 	<ItemGroup>
 	  <MauiAsset Include="Platforms\Android\Assets\pho-am-thuc-vinh-khanh-oc-dao-1707245308.jpg">
 	    <LogicalName>%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
@@ -139,9 +146,6 @@
 	  </MauiAsset>
 	  <MauiAsset Include="Platforms\Android\Assets\pho-am-thuc-vinh-khanh-oc-vu-1707245333.jpg">
 	    <LogicalName>%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
-	  </MauiAsset>
-	  <MauiAsset Include="VinhKhanh.db">
-	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	  </MauiAsset>
 	</ItemGroup>
 	
