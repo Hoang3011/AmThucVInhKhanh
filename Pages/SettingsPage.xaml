@@ -1,0 +1,77 @@
+<ContentPage
+    x:Class="TourGuideApp2.Pages.SettingsPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="Cài đặt"
+    BackgroundColor="{StaticResource Background}">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="16" Spacing="12">
+
+            <Label Text="API POI (CMS)"
+                   FontSize="18"
+                   FontAttributes="Bold"
+                   TextColor="{StaticResource Primary}" />
+
+            <Label Text="Dán URL dạng: http://&lt;ip&gt;:&lt;port&gt;/api/places"
+                   FontSize="12"
+                   TextColor="#546E7A" />
+
+            <Entry x:Name="poiApiUrlEntry"
+                   Placeholder="Ví dụ: http://192.168.31.212:5095/api/places"
+                   Keyboard="Url"
+                   BackgroundColor="#F5F7FA"
+                   HeightRequest="44"
+                   TextColor="#263238"
+                   PlaceholderColor="#90A4AE" />
+
+            <HorizontalStackLayout Spacing="10">
+                <Button Text="Lưu"
+                        Clicked="OnSaveClicked"
+                        BackgroundColor="#1E88E5"
+                        TextColor="White"
+                        CornerRadius="10"
+                        HeightRequest="44" />
+
+                <Button Text="Xóa URL đã lưu"
+                        Clicked="OnClearClicked"
+                        BackgroundColor="#E53935"
+                        TextColor="White"
+                        CornerRadius="10"
+                        HeightRequest="44" />
+            </HorizontalStackLayout>
+
+            <Button Text="Test kết nối"
+                    Clicked="OnTestClicked"
+                    BackgroundColor="#FF6200"
+                    TextColor="White"
+                    CornerRadius="10"
+                    HeightRequest="44" />
+
+            <Label x:Name="effectiveUrlLabel"
+                   FontSize="12"
+                   TextColor="#455A64" />
+
+            <Label x:Name="statusLabel"
+                   FontSize="12"
+                   TextColor="#37474F"
+                   LineBreakMode="WordWrap" />
+
+            <Border BackgroundColor="White"
+                    Stroke="#E0E0E0"
+                    StrokeThickness="1"
+                    Padding="12">
+                <VerticalStackLayout Spacing="6">
+                    <Label Text="Gợi ý nhanh"
+                           FontAttributes="Bold"
+                           TextColor="#0D47A1" />
+                    <Label Text="Nếu trước đây bạn từng set localhost/127.0.0.1 thì hãy bấm “Xóa URL đã lưu” rồi dán lại URL LAN."
+                           FontSize="12"
+                           TextColor="#546E7A" />
+                </VerticalStackLayout>
+            </Border>
+
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>
+

@@ -16,7 +16,8 @@ public static class PlaySyncService
     private static async Task SendAsync(string placeName, string source, string language, double? durationSeconds,
         DateTime timestampLocal)
     {
-        var origin = AppConfig.GetCmsOrigin();
+        // Dùng cùng origin với API POI để tránh “log lên server khác”.
+        var origin = PlaceApiService.GetCmsBaseUrl();
         if (string.IsNullOrEmpty(origin))
             return;
 

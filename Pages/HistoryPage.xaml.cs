@@ -1,3 +1,4 @@
+using Microsoft.Maui.ApplicationModel;
 using TourGuideApp2.Models;
 using TourGuideApp2.Services;
 
@@ -20,20 +21,112 @@ public partial class HistoryPage : ContentPage
 
     private async Task LoadHistoryAsync()
     {
-        var entries = await HistoryLogService.GetAllAsync();
-        BindStatistics(entries);
-        _items = entries
-            .OrderByDescending(x => x.Timestamp)
-            .Select(x => new HistoryEntryViewItem
-            {
-                PlaceName = x.PlaceName,
-                SourceLine = $"Nguồn: {x.Source} | Ngôn ngữ: {x.Language.ToUpperInvariant()}",
-                TimeLine = $"Thời gian: {x.Timestamp:dd/MM/yyyy HH:mm:ss} | Độ dài: {FormatDurationShort(x.DurationSeconds)}"
-            })
-            .ToList();
+        var local = await HistoryLogService.GetAllAsync();
+        var fetch = await RemotePlayHistoryService.FetchForCurrentCustomerAsync();
 
-        historyList.ItemsSource = _items;
-        emptyStateLabel.IsVisible = _items.Count == 0;
+        var serverList = fetch.Status == RemoteHistoryFetchStatus.Ok
+            ? fetch.Items.ToList()
+            : [];
+
+        // Đẩy lại lượt chỉ có trên máy (trước đó gửi log không kèm CustomerUserId) để khớp cột Khách trên CMS.
+        if (fetch.Status == RemoteHistoryFetchStatus.Ok && AuthService.GetCustomerIdForServerSync() is not null && local.Count > 0)
+        {
+            var pushed = false;
+            foreach (var l in local)
+            {
+                if (!serverList.Any(s => IsNearDuplicate(s, l)))
+                {
+                    PlaySyncService.Enqueue(l.PlaceName, l.Source, l.Language, l.DurationSeconds, l.Timestamp);
+                    pushed = true;
+                }
+            }
+
+            if (pushed)
+            {
+                // Nhiều POST nối đuôi — chờ CMS ghi xong trước khi GET lại.
+                var ms = Math.Clamp(local.Count * 120, 450, 2800);
+                await Task.Delay(ms).ConfigureAwait(false);
+                fetch = await RemotePlayHistoryService.FetchForCurrentCustomerAsync().ConfigureAwait(false);
+                if (fetch.Status == RemoteHistoryFetchStatus.Ok)
+                    serverList = fetch.Items.ToList();
+            }
+        }
+
+        var entries = MergeHistoryForDisplay(serverList, local);
+        var syncHint = BuildSyncStatusText(fetch);
+
+        await MainThread.InvokeOnMainThreadAsync(() =>
+        {
+            syncStatusLabel.Text = syncHint.Text;
+            syncStatusLabel.TextColor = syncHint.Color;
+            BindStatistics(entries);
+            _items = entries
+                .OrderByDescending(x => x.Timestamp)
+                .Select(x => new HistoryEntryViewItem
+                {
+                    PlaceName = x.PlaceName,
+                    SourceLine = $"Nguồn: {x.Source} | Ngôn ngữ: {x.Language.ToUpperInvariant()}",
+                    TimeLine = $"Thời gian: {x.Timestamp:dd/MM/yyyy HH:mm:ss} | Độ dài: {FormatDurationShort(x.DurationSeconds)}"
+                })
+                .ToList();
+
+            historyList.ItemsSource = _items;
+            emptyStateLabel.IsVisible = _items.Count == 0;
+        });
+    }
+
+    private static (string Text, Color Color) BuildSyncStatusText(RemoteHistoryFetchResult fetch)
+    {
+        return fetch.Status switch
+        {
+            RemoteHistoryFetchStatus.Ok =>
+                ($"Đồng bộ CMS: OK — {fetch.Items.Count} lượt trên máy chủ (đã gộp với cục bộ, trùng giờ sẽ gộp 1 dòng).",
+                    Color.FromArgb("#2E7D32")),
+            RemoteHistoryFetchStatus.SkippedNotRemoteSession =>
+                ($"Đồng bộ CMS: chưa bật — {fetch.Message}",
+                    Color.FromArgb("#E65100")),
+            RemoteHistoryFetchStatus.SkippedNoCmsUrl =>
+                ($"Đồng bộ CMS: {fetch.Message}", Color.FromArgb("#E65100")),
+            RemoteHistoryFetchStatus.Unauthorized =>
+                ($"Đồng bộ CMS: {fetch.Message}", Color.FromArgb("#C62828")),
+            RemoteHistoryFetchStatus.Failed =>
+                ($"Đồng bộ CMS: lỗi — {fetch.Message}", Color.FromArgb("#C62828")),
+            _ => ("Đồng bộ CMS: không xác định.", Color.FromArgb("#555555"))
+        };
+    }
+
+    /// <summary>Gộp máy chủ (ưu tiên) với file local, bỏ trùng gần giờ để khớp trang Lượt phát CMS.</summary>
+    private static List<HistoryEntry> MergeHistoryForDisplay(IReadOnlyList<HistoryEntry> remote, List<HistoryEntry> local)
+    {
+        var merged = new List<HistoryEntry>();
+        foreach (var r in remote)
+            merged.Add(r);
+
+        foreach (var l in local)
+        {
+            if (!merged.Any(m => IsNearDuplicate(m, l)))
+                merged.Add(l);
+        }
+
+        return merged.OrderByDescending(x => x.Timestamp).ToList();
+    }
+
+    private static bool IsNearDuplicate(HistoryEntry a, HistoryEntry b)
+    {
+        if (!string.Equals(a.PlaceName?.Trim(), b.PlaceName?.Trim(), StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (!string.Equals(a.Source?.Trim(), b.Source?.Trim(), StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (!string.Equals((a.Language ?? "").Trim(), (b.Language ?? "").Trim(), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var ua = a.Timestamp.Kind == DateTimeKind.Unspecified
+            ? DateTime.SpecifyKind(a.Timestamp, DateTimeKind.Local).ToUniversalTime()
+            : a.Timestamp.ToUniversalTime();
+        var ub = b.Timestamp.Kind == DateTimeKind.Unspecified
+            ? DateTime.SpecifyKind(b.Timestamp, DateTimeKind.Local).ToUniversalTime()
+            : b.Timestamp.ToUniversalTime();
+        return Math.Abs((ua - ub).TotalSeconds) < 5;
     }
 
     private void BindStatistics(List<HistoryEntry> entries)

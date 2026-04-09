@@ -27,6 +27,10 @@
                       Route="heatmap"
                       ContentTemplate="{DataTemplate pages:HeatmapPage}" />
 
+        <ShellContent Title="Cài đặt"
+                      Route="settings"
+                      ContentTemplate="{DataTemplate pages:SettingsPage}" />
+
     </TabBar>
 
 </Shell>

@@ -31,23 +31,35 @@ public static class PlaceApiService
     /// </summary>
     public static string GetEffectiveApiUrl()
     {
-        // Ưu tiên URL hard-code trong AppConfig để tránh kẹt Preferences cũ (thường là localhost).
-        var configUrl = AppConfig.DefaultPoiApiUrl.Trim();
-        if (!string.IsNullOrWhiteSpace(configUrl))
-            return configUrl;
-
+        // Ưu tiên Preferences để không phải rebuild khi đổi máy/port chạy CMS.
+        // (Ví dụ chạy CMS trên laptop khác trong mạng LAN.)
         var apiUrl = Preferences.Default.Get(PoiApiUrlPreferenceKey, string.Empty)?.Trim() ?? string.Empty;
-        if (apiUrl.Contains("localhost", StringComparison.OrdinalIgnoreCase) ||
-            apiUrl.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase))
+        // Nếu Preferences đang trỏ localhost (thường do test trên PC), bỏ qua để fallback sang URL đi kèm bản build.
+        if (!string.IsNullOrWhiteSpace(apiUrl) &&
+            (apiUrl.Contains("localhost", StringComparison.OrdinalIgnoreCase) ||
+             apiUrl.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase)))
         {
-            return string.Empty;
+            apiUrl = string.Empty;
         }
 
-        return apiUrl;
+        if (!string.IsNullOrWhiteSpace(apiUrl))
+            return apiUrl;
+
+        // Fallback: URL đi kèm bản phát hành.
+        return AppConfig.DefaultPoiApiUrl.Trim();
     }
 
     public static bool HasRemoteApiConfigured()
         => !string.IsNullOrWhiteSpace(GetEffectiveApiUrl());
+
+    /// <summary>Gốc CMS (scheme + host) trùng với API POI — đăng nhập từ xa, đồng bộ lượt phát và lịch sử.</summary>
+    public static string GetCmsBaseUrl()
+    {
+        var apiUrl = GetEffectiveApiUrl();
+        if (!string.IsNullOrWhiteSpace(apiUrl) && Uri.TryCreate(apiUrl.Trim(), UriKind.Absolute, out var u))
+            return $"{u.Scheme}://{u.Authority}";
+        return AppConfig.GetCmsOrigin();
+    }
 
     public static async Task<List<Place>?> TryGetRemotePlacesAsync()
     {
@@ -167,6 +179,7 @@ public static class PlaceApiService
 
         return new Place
         {
+            Id = dto.Id,
             Name = dto.Name ?? "POI",
             Address = dto.Address ?? string.Empty,
             Specialty = dto.Specialty ?? string.Empty,
@@ -187,6 +200,7 @@ public static class PlaceApiService
 
     private sealed class PoiApiItem
     {
+        public int Id { get; set; }
         public string? Name { get; set; }
         public string? Address { get; set; }
         public string? Specialty { get; set; }
@@ -202,5 +216,6 @@ public static class PlaceApiService
         public string? KoreanAudioText { get; set; }
         public double ActivationRadiusMeters { get; set; }
         public int Priority { get; set; }
+        public string? QrPayload { get; set; }
     }
 }

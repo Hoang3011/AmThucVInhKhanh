@@ -93,6 +93,15 @@
                     CornerRadius="12"
                     BackgroundColor="#455A64"
                     TextColor="White" />
+                <Button
+                    Text="🔄 Cập nhật POI"
+                    Clicked="OnRefreshPoisClicked"
+                    WidthRequest="132"
+                    HeightRequest="42"
+                    FontSize="12"
+                    CornerRadius="12"
+                    BackgroundColor="#2E7D32"
+                    TextColor="White" />
 
                 <!-- Ở trong phòng: GPS/Fake GPS trên máy thường không đưa được chấm tới quán. Chọn quán = đặt mốc đúng tọa độ quán trong DB (mô phỏng đứng gần đó). -->
                 <Label

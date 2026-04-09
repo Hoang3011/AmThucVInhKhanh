@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using QRCoder;
 using TourGuideCMS.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -30,11 +31,45 @@ app.UseAuthorization();
 app.MapGet("/api/places", async (PlaceRepository repo) =>
 {
     var rows = await repo.ListAsync();
-    return Results.Json(rows, new System.Text.Json.JsonSerializerOptions
+    var payload = rows.Select(r => new
+    {
+        id = r.Id,
+        name = r.Name,
+        address = r.Address,
+        specialty = r.Specialty,
+        imageUrl = r.ImageUrl,
+        latitude = r.Latitude,
+        longitude = r.Longitude,
+        activationRadiusMeters = r.ActivationRadiusMeters,
+        priority = r.Priority,
+        description = r.Description,
+        vietnameseAudioText = r.VietnameseAudioText,
+        englishAudioText = r.EnglishAudioText,
+        chineseAudioText = r.ChineseAudioText,
+        japaneseAudioText = r.JapaneseAudioText,
+        mapUrl = r.MapUrl,
+        qrPayload = $"app://poi?id={r.Id}"
+    });
+    return Results.Json(payload, new System.Text.Json.JsonSerializerOptions
     {
         PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     });
+});
+
+// QR PNG cho từng POI: dùng payload ổn định theo Id (không phụ thuộc index).
+app.MapGet("/qr/places/{id:int}", async (int id, PlaceRepository repo) =>
+{
+    var place = await repo.GetAsync(id);
+    if (place is null)
+        return Results.NotFound();
+
+    var content = $"app://poi?id={place.Id}";
+    using var gen = new QRCodeGenerator();
+    using var data = gen.CreateQrCode(content, QRCodeGenerator.ECCLevel.Q);
+    var png = new PngByteQRCode(data);
+    var bytes = png.GetGraphic(8);
+    return Results.File(bytes, "image/png");
 });
 
 static bool MobileKeyOk(HttpRequest req, IConfiguration config)
@@ -113,6 +148,35 @@ app.MapPost("/api/plays/log", async (HttpRequest req, CustomerAccountRepository 
         played);
 
     return Results.Ok(new { ok = true });
+});
+
+// Lịch sử lượt phát theo khách (app đồng bộ với trang /Plays)
+app.MapGet("/api/plays/history", async (HttpRequest req, CustomerAccountRepository repo, IConfiguration config) =>
+{
+    if (!MobileKeyOk(req, config))
+        return Results.Unauthorized();
+
+    var q = req.Query["customerUserId"].ToString();
+    if (string.IsNullOrWhiteSpace(q))
+        q = req.Query["customer_user_id"].ToString();
+    if (!int.TryParse(q, out var customerUserId) || customerUserId <= 0)
+        return Results.BadRequest(new { message = "Thiếu customerUserId (query)." });
+
+    var rows = await repo.ListPlaysForCustomerAsync(customerUserId, 500);
+    var payload = rows.Select(p => new
+    {
+        id = p.Id,
+        placeName = p.PlaceName,
+        source = p.Source,
+        language = p.Language,
+        durationSeconds = p.DurationSeconds,
+        playedAtUtc = p.PlayedAtUtc.ToUniversalTime().ToString("O")
+    });
+    return Results.Json(payload, new System.Text.Json.JsonSerializerOptions
+    {
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    });
 });
 
 app.MapRazorPages();

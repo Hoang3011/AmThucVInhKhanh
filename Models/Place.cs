@@ -2,6 +2,8 @@ namespace TourGuideApp2.Models;
 
 public class Place
 {
+    /// <summary>Id ổn định của POI (từ DB/CMS). Không dùng index trong list để làm QR/sync.</summary>
+    public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Address { get; set; } = string.Empty;
     public string Specialty { get; set; } = string.Empty;

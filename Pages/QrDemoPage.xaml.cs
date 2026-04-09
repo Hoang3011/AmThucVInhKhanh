@@ -21,11 +21,11 @@ public partial class QrDemoPage : ContentPage
         QrItems.Clear();
         for (var i = 0; i < places.Count; i++)
         {
-            var payload = $"app://poi?id={i}";
+            var payload = $"app://poi?id={places[i].Id}";
             var imageSource = GenerateQrImage(payload);
             QrItems.Add(new QrDemoItem
             {
-                Name = $"{i}. {places[i].Name}",
+                Name = $"{places[i].Id}. {places[i].Name}",
                 Payload = payload,
                 QrImage = imageSource
             });

@@ -21,6 +21,7 @@ namespace TourGuideApp2;
 public partial class MapPage : ContentPage
 {
     private List<Place> _pois = [];
+    private Dictionary<int, int> _poiIndexById = new();
     private bool _suppressQrPickerEvent;
     private bool _suppressSimulatePoiPickerEvent;
     private readonly Dictionary<int, DateTime> _autoGeoLastLogByPoi = [];
@@ -54,14 +55,21 @@ public partial class MapPage : ContentPage
     private double _lastQueuedGpsLng = double.NaN;
     private const double GpsDuplicateEpsilonDegrees = 1e-7;
     /// <summary>Chỉ nhận điểm GPS có độ chính xác chấp nhận được (m). Null/0 = không có metadata, vẫn cho qua.</summary>
-    private const double MaxGpsAccuracyMeters = 55;
-    /// <summary>Loại bỏ điểm nhảy bất thường trong khoảng thời gian ngắn (m/s).</summary>
-    private const double MaxGpsSpeedMetersPerSecond = 45;
+    private const double MaxGpsAccuracyMeters = 40;
+    /// <summary>Loại bỏ điểm nhảy bất thường trong khoảng thời gian ngắn (m/s). Đi bộ nhanh ~2–3 m/s; để dư địa khi demo.</summary>
+    private const double MaxGpsSpeedMetersPerSecond = 12;
     /// <summary>Chỉ áp speed-filter khi quãng nhảy đủ lớn, tránh false-positive do nhiễu nhỏ.</summary>
-    private const double MinDistanceForSpeedFilterMeters = 90;
+    private const double MinDistanceForSpeedFilterMeters = 45;
     /// <summary>Cho phép "teleport" lớn khi test Fake GPS để không bị kẹt tại điểm cũ.</summary>
-    private const double AllowLargeJumpMeters = 280;
+    private const double AllowLargeJumpMeters = 420;
+    /// <summary>Throttle để tránh spam UI + route/geofence khi GPS bắn quá dày.</summary>
+    private static readonly TimeSpan MinGpsProcessGap = TimeSpan.FromMilliseconds(700);
+    /// <summary>Làm mượt nhẹ để marker/route ổn định (0..1). Alpha nhỏ => mượt hơn nhưng trễ hơn.</summary>
+    private const double GpsEmaAlpha = 0.28;
     private DateTime? _lastAcceptedGpsUtc;
+    private DateTime? _lastProcessedGpsUtc;
+    private double _smoothedGpsLat = double.NaN;
+    private double _smoothedGpsLng = double.NaN;
     private string _currentZoneStatus = "Đang xác định vùng...";
     /// <summary>Sau khi bấm mũi tên / xe buýt, tạm không áp GPS để không đè vị trí giả lập.</summary>
     private DateTime? _gpsManualOverrideUntilUtc;
@@ -76,6 +84,7 @@ public partial class MapPage : ContentPage
     private const double DemoVinhKhanhLat = 10.7590;
     private const double DemoVinhKhanhLng = 106.7041;
     private string _selectedLanguage = "vi";
+    private int _isRefreshingPois;
 
     /// <summary>Ưu tiên POI từ API khi đã cấu hình <c>PoiApiUrl</c> (+ <c>PoiApiKey</c> cho Supabase); không thì đọc <c>VinhKhanh.db</c> cục bộ.</summary>
     private async Task<List<Place>> LoadPlacesAsync()
@@ -307,6 +316,11 @@ public partial class MapPage : ContentPage
     private async Task LoadMapAsync()
     {
         _pois = await LoadPlacesAsync();
+        _poiIndexById = _pois
+            .Select((p, idx) => new { p, idx })
+            .Where(x => x.p is not null)
+            .GroupBy(x => x.p.Id)
+            .ToDictionary(g => g.Key, g => g.First().idx);
         PopulateQrPicker();
 
         // Vị trí mặc định - khu Vĩnh Khánh, Q4
@@ -330,7 +344,7 @@ public partial class MapPage : ContentPage
             if (p == null) continue;
             poiDtos.Add(new
             {
-                id = i,
+                id = p.Id,
                 name = p.Name,
                 lat = p.Latitude,
                 lng = p.Longitude,
@@ -348,9 +362,9 @@ public partial class MapPage : ContentPage
         var hasCurrentLocationJs = hasCurrentLocation ? "true" : "false";
         var busStopDtos = new List<object>
         {
-            new { code = "KHANH_HOI", name = "Điểm dừng xe buýt Khánh Hội", lat = 10.7597, lng = 106.7050, poiId = 4 },
-            new { code = "VINH_HOI",  name = "Điểm dừng xe buýt Vĩnh Hội",  lat = 10.7586, lng = 106.7036, poiId = 0 },
-            new { code = "XOM_CHIEU", name = "Điểm dừng xe buýt Xóm Chiếu", lat = 10.7603, lng = 106.7026, poiId = 1 }
+            new { code = "KHANH_HOI", name = "Điểm dừng xe buýt Khánh Hội", lat = 10.7597, lng = 106.7050, poiId = _pois.Count > 4 ? _pois[4].Id : 4 },
+            new { code = "VINH_HOI",  name = "Điểm dừng xe buýt Vĩnh Hội",  lat = 10.7586, lng = 106.7036, poiId = _pois.Count > 0 ? _pois[0].Id : 0 },
+            new { code = "XOM_CHIEU", name = "Điểm dừng xe buýt Xóm Chiếu", lat = 10.7603, lng = 106.7026, poiId = _pois.Count > 1 ? _pois[1].Id : 1 }
         };
         var busStopJsArray = string.Join(",", busStopDtos.Select(x => JsonSerializer.Serialize(x)));
         var routePoints = await RouteTrackService.GetPointsAsync();
@@ -897,6 +911,27 @@ for (var i = 0; i < pois.length; i++) {{
         }
     }
 
+    private async void OnRefreshPoisClicked(object? sender, EventArgs e)
+    {
+        if (Interlocked.Exchange(ref _isRefreshingPois, 1) == 1)
+            return;
+
+        try
+        {
+            UpdateGeoStatusLabel("Đang cập nhật POI từ server...");
+            await SafeLoadMapAsync();
+            UpdateGeoStatusLabel("Đã cập nhật POI.");
+        }
+        catch (Exception ex)
+        {
+            await DisplayAlertAsync("Lỗi cập nhật POI", ex.Message, "OK");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _isRefreshingPois, 0);
+        }
+    }
+
     private void PopulateQrPicker()
     {
         pickerPoiForQr.Items.Clear();
@@ -1007,8 +1042,13 @@ for (var i = 0; i < pois.length; i++) {{
     /// </summary>
     private async Task RunBusStopSelectionAsync(string token)
     {
-        if (!TryResolveBusStopPoiIndex(token, out var poiIndex) && !TryResolvePoiIndexFromQr(token, out poiIndex))
-            return;
+        if (!TryResolveBusStopPoiIndex(token, out var poiIndex))
+        {
+            if (!TryResolvePoiIdFromQr(token, out var poiId))
+                return;
+            if (!_poiIndexById.TryGetValue(poiId, out poiIndex))
+                return;
+        }
 
         _suppressQrPickerEvent = true;
         try
@@ -1272,7 +1312,7 @@ for (var i = 0; i < pois.length; i++) {{
         if (poiIndex < 0 || poiIndex >= _pois.Count) return;
 
         var place = _pois[poiIndex];
-        var payload = $"app://poi?id={poiIndex}";
+        var payload = $"app://poi?id={place.Id}";
 
         lblQrNearbyTitle.Text = place.Name;
         lblNearbyPayload.Text = payload;
@@ -1318,7 +1358,7 @@ for (var i = 0; i < pois.length; i++) {{
 
         var idx = pickerPoiForQr.SelectedIndex;
         var place = _pois[idx];
-        var payload = $"app://poi?id={idx}";
+        var payload = $"app://poi?id={place.Id}";
 
         try
         {
@@ -1348,13 +1388,13 @@ for (var i = 0; i < pois.length; i++) {{
 
     private async Task HandleQrScanAsync(string rawValue)
     {
-        if (!TryResolvePoiIndexFromQr(rawValue, out var poiIndex))
+        if (!TryResolvePoiIdFromQr(rawValue, out var poiId))
         {
             await DisplayAlertAsync("QR không hợp lệ", "Không tìm thấy POI từ mã QR này.", "OK");
             return;
         }
 
-        if (poiIndex < 0 || poiIndex >= _pois.Count)
+        if (!_poiIndexById.TryGetValue(poiId, out var poiIndex) || poiIndex < 0 || poiIndex >= _pois.Count)
         {
             await DisplayAlertAsync("POI không tồn tại", "Mã QR đã quét không có trong dữ liệu hiện tại.", "OK");
             return;
@@ -1389,13 +1429,13 @@ for (var i = 0; i < pois.length; i++) {{
             await HistoryLogService.AddAsync(place.Name, "QR", _selectedLanguage);
         }
 
-        await mapView.EvaluateJavaScriptAsync($"window.openPoiById && window.openPoiById({poiIndex});");
+        await mapView.EvaluateJavaScriptAsync($"window.openPoiById && window.openPoiById({poiId});");
         // Theo yêu cầu "quét là nghe ngay", không chặn luồng bằng popup success.
     }
 
-    private bool TryResolvePoiIndexFromQr(string rawValue, out int poiIndex)
+    private bool TryResolvePoiIdFromQr(string rawValue, out int poiId)
     {
-        poiIndex = -1;
+        poiId = -1;
         if (string.IsNullOrWhiteSpace(rawValue)) return false;
 
         var value = rawValue.Trim();
@@ -1405,12 +1445,12 @@ for (var i = 0; i < pois.length; i++) {{
         // Khớp chính xác trước (tránh nhầm khi chuỗi dài chứa nhiều từ khóa).
         if (normalized is "KHANHHOI" or "VINHHOI" or "XOMCHIEU")
         {
-            poiIndex = normalized switch
+            poiId = normalized switch
             {
-                "KHANHHOI" => 4,
-                "VINHHOI" => 0,
-                "XOMCHIEU" => 1,
-                _ => -1
+                "KHANHHOI" => _pois.Count > 4 ? _pois[4].Id : 4,
+                "VINHHOI" => _pois.Count > 0 ? _pois[0].Id : 0,
+                "XOMCHIEU" => _pois.Count > 1 ? _pois[1].Id : 1,
+                _ => -1,
             };
             return true;
         }
@@ -1418,24 +1458,24 @@ for (var i = 0; i < pois.length; i++) {{
         // Chuỗi QR có tiền tố/hậu tố (vd. STOP_KHANHHOI_V1)
         if (normalized.Contains("KHANHHOI"))
         {
-            poiIndex = 4;
+            poiId = _pois.Count > 4 ? _pois[4].Id : 4;
             return true;
         }
         if (normalized.Contains("VINHHOI"))
         {
-            poiIndex = 0;
+            poiId = _pois.Count > 0 ? _pois[0].Id : 0;
             return true;
         }
         if (normalized.Contains("XOMCHIEU"))
         {
-            poiIndex = 1;
+            poiId = _pois.Count > 1 ? _pois[1].Id : 1;
             return true;
         }
 
         // Hỗ trợ trường hợp mã chỉ chứa số thứ tự POI.
         if (int.TryParse(value, out var directIndex))
         {
-            poiIndex = directIndex;
+            poiId = directIndex;
             return true;
         }
 
@@ -1454,7 +1494,7 @@ for (var i = 0; i < pois.length; i++) {{
                     var val = Uri.UnescapeDataString(kv[1]);
                     if ((key == "id" || key == "poiid" || key == "poi") && int.TryParse(val, out var parsed))
                     {
-                        poiIndex = parsed;
+                        poiId = parsed;
                         return true;
                     }
                 }
@@ -1465,7 +1505,7 @@ for (var i = 0; i < pois.length; i++) {{
         var idMatch = Regex.Match(value, @"[?&]id=(\d+)", RegexOptions.IgnoreCase);
         if (idMatch.Success && int.TryParse(idMatch.Groups[1].Value, out var idFromRegex))
         {
-            poiIndex = idFromRegex;
+            poiId = idFromRegex;
             return true;
         }
 
@@ -1479,28 +1519,28 @@ for (var i = 0; i < pois.length; i++) {{
                 if (root.TryGetProperty("stop", out var stopProp))
                 {
                     var stopValue = NormalizeQrToken(stopProp.GetString() ?? string.Empty);
-                    if (stopValue.Contains("KHANHHOI")) { poiIndex = 4; return true; }
-                    if (stopValue.Contains("VINHHOI")) { poiIndex = 0; return true; }
-                    if (stopValue.Contains("XOMCHIEU")) { poiIndex = 1; return true; }
+                    if (stopValue.Contains("KHANHHOI")) { poiId = _pois.Count > 4 ? _pois[4].Id : 4; return true; }
+                    if (stopValue.Contains("VINHHOI")) { poiId = _pois.Count > 0 ? _pois[0].Id : 0; return true; }
+                    if (stopValue.Contains("XOMCHIEU")) { poiId = _pois.Count > 1 ? _pois[1].Id : 1; return true; }
                 }
 
                 if (root.TryGetProperty("ward", out var wardProp))
                 {
                     var wardValue = NormalizeQrToken(wardProp.GetString() ?? string.Empty);
-                    if (wardValue.Contains("KHANHHOI")) { poiIndex = 4; return true; }
-                    if (wardValue.Contains("VINHHOI")) { poiIndex = 0; return true; }
-                    if (wardValue.Contains("XOMCHIEU")) { poiIndex = 1; return true; }
+                    if (wardValue.Contains("KHANHHOI")) { poiId = _pois.Count > 4 ? _pois[4].Id : 4; return true; }
+                    if (wardValue.Contains("VINHHOI")) { poiId = _pois.Count > 0 ? _pois[0].Id : 0; return true; }
+                    if (wardValue.Contains("XOMCHIEU")) { poiId = _pois.Count > 1 ? _pois[1].Id : 1; return true; }
                 }
 
                 if (root.TryGetProperty("poiId", out var poiIdProp) && poiIdProp.TryGetInt32(out var jsonPoiId))
                 {
-                    poiIndex = jsonPoiId;
+                    poiId = jsonPoiId;
                     return true;
                 }
 
                 if (root.TryGetProperty("id", out var idProp) && idProp.TryGetInt32(out var jsonId))
                 {
-                    poiIndex = jsonId;
+                    poiId = jsonId;
                     return true;
                 }
             }
@@ -1514,7 +1554,7 @@ for (var i = 0; i < pois.length; i++) {{
         var match = Regex.Match(value, @"\d+");
         if (match.Success && int.TryParse(match.Value, out var extracted))
         {
-            poiIndex = extracted;
+            poiId = extracted;
             return true;
         }
 
@@ -1997,29 +2037,34 @@ for (var i = 0; i < pois.length; i++) {{
         if (_gpsManualOverrideUntilUtc is DateTime until && DateTime.UtcNow < until)
             return;
 
+        // Throttle: tránh xử lý quá dày (đặc biệt khi vừa có event vừa poll Android).
+        var nowUtc = DateTime.UtcNow;
+        if (_lastProcessedGpsUtc.HasValue && (nowUtc - _lastProcessedGpsUtc.Value) < MinGpsProcessGap)
+            return;
+
         if (!double.IsNaN(_lastQueuedGpsLat) &&
             Math.Abs(location.Latitude - _lastQueuedGpsLat) < GpsDuplicateEpsilonDegrees &&
             Math.Abs(location.Longitude - _lastQueuedGpsLng) < GpsDuplicateEpsilonDegrees)
             return;
 
-        if (!IsGpsAccuracyAcceptable(location))
+        if (!TryAcceptAndSmoothGps(location, out var acceptedLat, out var acceptedLng, out var qualityText))
             return;
 
-        if (IsGpsJumpLikelyInvalid(location))
-            return;
+        _lastQueuedGpsLat = acceptedLat;
+        _lastQueuedGpsLng = acceptedLng;
+        _lastAcceptedGpsUtc = nowUtc;
+        _lastProcessedGpsUtc = nowUtc;
 
-        _lastQueuedGpsLat = location.Latitude;
-        _lastQueuedGpsLng = location.Longitude;
-        _lastAcceptedGpsUtc = DateTime.UtcNow;
-
-        var lat = location.Latitude;
-        var lng = location.Longitude;
+        var lat = acceptedLat;
+        var lng = acceptedLng;
 
         _ = MainThread.InvokeOnMainThreadAsync(async () =>
         {
             _simulatedLat = lat;
             _simulatedLng = lng;
             _hasSimulationPosition = true;
+            if (!string.IsNullOrWhiteSpace(qualityText))
+                UpdateGeoStatusLabel($"{_currentZoneStatus} | {qualityText}");
             await SyncUserMarkerPositionOnMapAsync(panToMarker: false);
             await TrackRoutePointAsync("gps");
             await CheckProximityAndSpeakAsync();
@@ -2061,6 +2106,59 @@ for (var i = 0; i < pois.length; i++) {{
 
         var speedMps = distanceMeters / dtSeconds;
         return speedMps > MaxGpsSpeedMetersPerSecond;
+    }
+
+    private bool TryAcceptAndSmoothGps(Location location, out double acceptedLat, out double acceptedLng, out string qualityText)
+    {
+        acceptedLat = 0;
+        acceptedLng = 0;
+        qualityText = string.Empty;
+
+        var accuracy = location.Accuracy;
+        if (!IsGpsAccuracyAcceptable(location))
+        {
+            if (accuracy.HasValue && accuracy.Value > 0)
+                qualityText = $"GPS yếu (±{Math.Round(accuracy.Value)}m)";
+            else
+                qualityText = "GPS yếu";
+            return false;
+        }
+
+        if (IsGpsJumpLikelyInvalid(location))
+        {
+            // Không “kêu” quá nhiều lên UI, chỉ báo nhẹ để hiểu vì sao không nhảy marker.
+            qualityText = "GPS nhiễu (lọc jump)";
+            return false;
+        }
+
+        // EMA smoothing: ổn định marker/route khi GPS hơi rung.
+        var lat = location.Latitude;
+        var lng = location.Longitude;
+        if (double.IsNaN(_smoothedGpsLat) || double.IsNaN(_smoothedGpsLng))
+        {
+            _smoothedGpsLat = lat;
+            _smoothedGpsLng = lng;
+        }
+        else
+        {
+            _smoothedGpsLat = (GpsEmaAlpha * lat) + ((1 - GpsEmaAlpha) * _smoothedGpsLat);
+            _smoothedGpsLng = (GpsEmaAlpha * lng) + ((1 - GpsEmaAlpha) * _smoothedGpsLng);
+        }
+
+        acceptedLat = _smoothedGpsLat;
+        acceptedLng = _smoothedGpsLng;
+
+        if (accuracy.HasValue && accuracy.Value > 0)
+        {
+            var a = accuracy.Value;
+            qualityText = a <= 25 ? $"GPS ổn (±{Math.Round(a)}m)" : $"GPS tạm (±{Math.Round(a)}m)";
+        }
+        else
+        {
+            qualityText = "GPS OK";
+        }
+
+        return true;
     }
 
 #if ANDROID
@@ -2293,9 +2391,10 @@ for (var i = 0; i < pois.length; i++) {{
                     lang = value.ToLower();
             }
 
-            if (id < 0 || id >= _pois.Count) return;
+            if (!_poiIndexById.TryGetValue(id, out var poiIndex) || poiIndex < 0 || poiIndex >= _pois.Count)
+                return;
 
-            var place = _pois[id];
+            var place = _pois[poiIndex];
 
             // === CẬP NHẬT LẤY TEXT CHO 4 NGÔN NGỮ ===
             var text = lang switch
@@ -2308,7 +2407,7 @@ for (var i = 0; i < pois.length; i++) {{
 
             CancelProximitySpeech();
             CancelBusStopSpeech();
-            var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(id, lang, text ?? "");
+            var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(poiIndex, lang, text ?? "");
             UpdateLastPlayedLabel(place.Name, "Map");
             await HistoryLogService.AddAsync(place.Name, "Map", lang, durationSeconds);
         }

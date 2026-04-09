@@ -90,6 +90,7 @@ public static class PlaceLocalRepository
                 {
                     var place = new Place
                     {
+                        Id = readerData.GetInt32(0),
                         Name = readerData.GetString(1),
                         Address = readerData.GetString(2),
                         Specialty = readerData.GetString(3),

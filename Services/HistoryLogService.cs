@@ -41,19 +41,20 @@ public static class HistoryLogService
                 items = await JsonSerializer.DeserializeAsync<List<HistoryEntry>>(read) ?? [];
             }
 
+            var playedAt = DateTime.Now;
             items.Add(new HistoryEntry
             {
                 PlaceName = placeName,
                 Source = source,
                 Language = language,
-                Timestamp = DateTime.Now,
+                Timestamp = playedAt,
                 DurationSeconds = durationSeconds.HasValue ? Math.Round(durationSeconds.Value, 1) : null
             });
 
             await using var write = File.Create(FilePath);
             await JsonSerializer.SerializeAsync(write, items);
 
-            PlaySyncService.Enqueue(placeName, source, language, durationSeconds, DateTime.Now);
+            PlaySyncService.Enqueue(placeName, source, language, durationSeconds, playedAt);
         }
         finally
         {

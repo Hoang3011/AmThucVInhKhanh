@@ -17,6 +17,7 @@
             <th>Ưu tiên</th>
             <th>Tọa độ</th>
             <th>Bán kính (m)</th>
+            <th>QR</th>
             <th></th>
         </tr>
     </thead>
@@ -29,6 +30,10 @@
             <td>@p.Priority</td>
             <td>@p.Latitude.ToString("F5"), @p.Longitude.ToString("F5")</td>
             <td>@p.ActivationRadiusMeters</td>
+            <td>
+                <img src="/qr/places/@p.Id" alt="QR @p.Id" style="width:70px;height:70px;border:1px solid #eee;border-radius:8px;background:#fff;padding:4px;" />
+                <div class="text-muted" style="font-size:12px">app://poi?id=@p.Id</div>
+            </td>
             <td>
                 <a asp-page="Edit" asp-route-id="@p.Id">Sửa</a> |
                 <a asp-page="Delete" asp-route-id="@p.Id" class="text-danger">Xóa</a>

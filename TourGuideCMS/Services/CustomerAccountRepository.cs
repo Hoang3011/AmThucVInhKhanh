@@ -245,6 +245,41 @@ public sealed class CustomerAccountRepository
         return list;
     }
 
+    public async Task<IReadOnlyList<NarrationPlayRow>> ListPlaysForCustomerAsync(int customerUserId, int take = 500)
+    {
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        var list = new List<NarrationPlayRow>();
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT p.Id, p.CustomerUserId, p.PlaceName, p.Source, p.Language, p.DurationSeconds, p.PlayedAtUtc,
+                   u.PhoneOrEmail
+            FROM NarrationPlay p
+            LEFT JOIN CustomerUser u ON u.Id = p.CustomerUserId
+            WHERE p.CustomerUserId = @uid
+            ORDER BY p.PlayedAtUtc DESC
+            LIMIT @lim
+            """;
+        cmd.Parameters.AddWithValue("@uid", customerUserId);
+        cmd.Parameters.AddWithValue("@lim", take);
+        await using var r = await cmd.ExecuteReaderAsync();
+        while (await r.ReadAsync())
+        {
+            list.Add(new NarrationPlayRow(
+                r.GetInt32(0),
+                r.IsDBNull(1) ? null : r.GetInt32(1),
+                r.GetString(2),
+                r.GetString(3),
+                r.IsDBNull(4) ? null : r.GetString(4),
+                r.IsDBNull(5) ? null : r.GetDouble(5),
+                DateTime.TryParse(r.GetString(6), out var pt) ? pt : DateTime.MinValue,
+                r.IsDBNull(7) ? null : r.GetString(7)));
+        }
+
+        return list;
+    }
+
     /// <summary>Tổng lượt phát theo địa điểm và nguồn (QR, Map, …).</summary>
     public async Task<IReadOnlyList<PlayAggregateRow>> GetAggregatesByPlaceAsync()
     {

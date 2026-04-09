@@ -6,20 +6,28 @@
     Title="Lịch sử">
 
     <Grid RowDefinitions="Auto,Auto,*" Padding="12">
-        <HorizontalStackLayout Spacing="8">
-            <Button
-                Text="Làm mới"
-                Clicked="OnRefreshClicked"
-                BackgroundColor="#1E88E5"
-                TextColor="White"
-                CornerRadius="10" />
-            <Button
-                Text="Xóa tất cả"
-                Clicked="OnClearAllClicked"
-                BackgroundColor="#E53935"
-                TextColor="White"
-                CornerRadius="10" />
-        </HorizontalStackLayout>
+        <VerticalStackLayout Spacing="6">
+            <HorizontalStackLayout Spacing="8">
+                <Button
+                    Text="Làm mới"
+                    Clicked="OnRefreshClicked"
+                    BackgroundColor="#1E88E5"
+                    TextColor="White"
+                    CornerRadius="10" />
+                <Button
+                    Text="Xóa tất cả"
+                    Clicked="OnClearAllClicked"
+                    BackgroundColor="#E53935"
+                    TextColor="White"
+                    CornerRadius="10" />
+            </HorizontalStackLayout>
+            <Label
+                x:Name="syncStatusLabel"
+                FontSize="11"
+                TextColor="#555555"
+                LineBreakMode="WordWrap"
+                Text="Đồng bộ CMS: …" />
+        </VerticalStackLayout>
 
         <Border
             Grid.Row="1"
