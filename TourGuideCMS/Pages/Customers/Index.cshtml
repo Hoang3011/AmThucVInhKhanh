@@ -1,0 +1,40 @@
+@page
+@model TourGuideCMS.Pages.Customers.IndexModel
+@{
+    ViewData["Title"] = "Khách hàng (app)";
+}
+
+<h1>Khách hàng đăng ký qua app</h1>
+<p class="text-muted small">
+    Tài khoản được tạo khi app gọi <code>POST /api/customers/register</code> (cùng host với API POI).
+    Mật khẩu không hiển thị — chỉ quản lý danh sách.
+</p>
+
+<table class="table table-sm table-striped">
+    <thead>
+        <tr>
+            <th>Id</th>
+            <th>Họ tên</th>
+            <th>Email / SĐT</th>
+            <th>Ngày tạo (UTC)</th>
+        </tr>
+    </thead>
+    <tbody>
+    @foreach (var u in Model.Users)
+    {
+        <tr>
+            <td>@u.Id</td>
+            <td>@u.FullName</td>
+            <td>@u.PhoneOrEmail</td>
+            <td>@u.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm")</td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+@if (Model.Users.Count == 0)
+{
+    <p class="alert alert-light border">Chưa có tài khoản nào đồng bộ từ app.</p>
+}
+
+<p><a asp-page="/Index">← Trang chủ</a></p>

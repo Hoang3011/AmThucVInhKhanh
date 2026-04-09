@@ -82,7 +82,12 @@ public partial class MapPage : ContentPage
     {
         var remote = await PlaceApiService.TryGetRemotePlacesAsync();
         if (remote is { Count: > 0 })
+        {
+            // Giữ dữ liệu từ API để đồng bộ CMS, nhưng không làm mất phần thuyết minh:
+            // nếu API thiếu text audio thì bù từ DB cục bộ theo tên + tọa độ gần đúng.
+            await FillMissingNarrationFromLocalAsync(remote);
             return SanitizePlaces(remote);
+        }
 
         if (PlaceApiService.HasRemoteApiConfigured())
         {
@@ -104,6 +109,67 @@ public partial class MapPage : ContentPage
         }
 
         return places;
+    }
+
+    private static bool HasAnyNarration(Place? p)
+    {
+        if (p is null) return false;
+        return !string.IsNullOrWhiteSpace(p.VietnameseAudioText)
+               || !string.IsNullOrWhiteSpace(p.EnglishAudioText)
+               || !string.IsNullOrWhiteSpace(p.ChineseAudioText)
+               || !string.IsNullOrWhiteSpace(p.JapaneseAudioText);
+    }
+
+    private static bool IsLikelySamePoi(Place a, Place b)
+    {
+        var sameName = string.Equals(
+            (a.Name ?? string.Empty).Trim(),
+            (b.Name ?? string.Empty).Trim(),
+            StringComparison.OrdinalIgnoreCase);
+
+        if (!sameName) return false;
+
+        var dLat = Math.Abs(a.Latitude - b.Latitude);
+        var dLng = Math.Abs(a.Longitude - b.Longitude);
+        return dLat <= 0.0008 && dLng <= 0.0008;
+    }
+
+    private static void CopyNarrationIfMissing(Place target, Place source)
+    {
+        if (string.IsNullOrWhiteSpace(target.VietnameseAudioText))
+            target.VietnameseAudioText = source.VietnameseAudioText ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(target.EnglishAudioText))
+            target.EnglishAudioText = source.EnglishAudioText ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(target.ChineseAudioText))
+            target.ChineseAudioText = source.ChineseAudioText ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(target.JapaneseAudioText))
+            target.JapaneseAudioText = source.JapaneseAudioText ?? string.Empty;
+    }
+
+    private static async Task FillMissingNarrationFromLocalAsync(List<Place> remote)
+    {
+        if (remote.Count == 0)
+            return;
+
+        var remoteMissingNarration = remote.Any(p => !HasAnyNarration(p));
+        if (!remoteMissingNarration)
+            return;
+
+        var local = await PlaceLocalRepository.TryLoadAsync();
+        if (local.Places.Count == 0)
+            return;
+
+        foreach (var r in remote)
+        {
+            if (HasAnyNarration(r))
+                continue;
+
+            var candidate = local.Places.FirstOrDefault(l => IsLikelySamePoi(r, l));
+            if (candidate is null)
+                continue;
+
+            CopyNarrationIfMissing(r, candidate);
+        }
     }
 
     /// <summary>Loại tiền tố số rác kiểu "7272727..." trước nội dung thuyết minh.</summary>

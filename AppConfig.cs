@@ -6,6 +6,19 @@ namespace TourGuideApp2;
 /// </summary>
 public static class AppConfig
 {
-    public const string DefaultPoiApiUrl = "http://192.168.1.101:5095/api/places";
+    public const string DefaultPoiApiUrl = "http://192.168.31.212:5095/api/places";
     public const string DefaultPoiApiKey = "";
+
+    /// <summary>Khóa trùng <c>App:MobileApiKey</c> trên CMS (để trống = không kiểm tra).</summary>
+    public const string MobileApiKey = "";
+
+    /// <summary>Gốc URL CMS (cùng host với API POI). Trả rỗng nếu <see cref="DefaultPoiApiUrl"/> không hợp lệ — khi đó đăng nhập chỉ cục bộ.</summary>
+    public static string GetCmsOrigin()
+    {
+        if (string.IsNullOrWhiteSpace(DefaultPoiApiUrl))
+            return string.Empty;
+        if (!Uri.TryCreate(DefaultPoiApiUrl.Trim(), UriKind.Absolute, out var u))
+            return string.Empty;
+        return $"{u.Scheme}://{u.Authority}";
+    }
 }

@@ -52,6 +52,8 @@ public static class HistoryLogService
 
             await using var write = File.Create(FilePath);
             await JsonSerializer.SerializeAsync(write, items);
+
+            PlaySyncService.Enqueue(placeName, source, language, durationSeconds, DateTime.Now);
         }
         finally
         {

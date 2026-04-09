@@ -1,4 +1,4 @@
 <Solution>
   <Project Path="TourGuideApp2.csproj" />
-  <Project Path="../TourGuideCMS/TourGuideCMS.csproj" />
+  <Project Path="TourGuideCMS/TourGuideCMS.csproj" />
 </Solution>

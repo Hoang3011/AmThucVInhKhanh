@@ -1,5 +1,7 @@
+using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using TourGuideApp2.Data;
 using TourGuideApp2.Models;
@@ -12,6 +14,7 @@ public static class AuthService
     private const string SessionUserNameKey = "SessionUserName";
     private const string SessionUserAccountKey = "SessionUserAccount";
     private const string SessionUserCreatedAtKey = "SessionUserCreatedAt";
+    private const string SessionIsRemoteKey = "SessionIsRemote";
     private static bool _initialized;
 
     private static async Task InitAsync()
@@ -45,6 +48,9 @@ CREATE TABLE IF NOT EXISTS UserAccount (
         if (password.Length < 6)
             return (false, "Mật khẩu tối thiểu 6 ký tự.");
 
+        if (!string.IsNullOrWhiteSpace(AppConfig.GetCmsOrigin()))
+            return await RegisterRemoteAsync(fullName, phoneOrEmail, password);
+
         return await RegisterLocalAsync(fullName, phoneOrEmail, password);
     }
 
@@ -55,6 +61,9 @@ CREATE TABLE IF NOT EXISTS UserAccount (
 
         if (string.IsNullOrWhiteSpace(phoneOrEmail) || string.IsNullOrWhiteSpace(password))
             return (false, "Vui lòng nhập tài khoản và mật khẩu.", null);
+
+        if (!string.IsNullOrWhiteSpace(AppConfig.GetCmsOrigin()))
+            return await LoginRemoteAsync(phoneOrEmail, password);
 
         return await LoginLocalAsync(phoneOrEmail, password);
     }
@@ -119,7 +128,7 @@ LIMIT 1;";
         if (!string.Equals(computed, user.PasswordHash, StringComparison.Ordinal))
             return (false, "Sai mật khẩu.", null);
 
-        SetSession(user);
+        SetSession(user, false);
         return (true, "Đăng nhập thành công.", user);
     }
 
@@ -129,6 +138,17 @@ LIMIT 1;";
         Preferences.Default.Remove(SessionUserNameKey);
         Preferences.Default.Remove(SessionUserAccountKey);
         Preferences.Default.Remove(SessionUserCreatedAtKey);
+        Preferences.Default.Remove(SessionIsRemoteKey);
+    }
+
+    /// <summary>Chỉ khi đăng nhập qua máy chủ — dùng để đồng bộ lượt phát.</summary>
+    public static int? GetCustomerIdForServerSync()
+    {
+        if (!IsLoggedIn)
+            return null;
+        if (!Preferences.Default.Get(SessionIsRemoteKey, false))
+            return null;
+        return Preferences.Default.Get(SessionUserIdKey, 0);
     }
 
     public static bool IsLoggedIn => Preferences.Default.ContainsKey(SessionUserIdKey);
@@ -145,12 +165,94 @@ LIMIT 1;";
         }
     }
 
-    private static void SetSession(UserAccount user)
+    private static void SetSession(UserAccount user, bool isRemoteSession)
     {
         Preferences.Default.Set(SessionUserIdKey, user.Id);
         Preferences.Default.Set(SessionUserNameKey, user.FullName);
         Preferences.Default.Set(SessionUserAccountKey, user.PhoneOrEmail ?? string.Empty);
         Preferences.Default.Set(SessionUserCreatedAtKey, user.CreatedAt.ToString("O"));
+        Preferences.Default.Set(SessionIsRemoteKey, isRemoteSession);
+    }
+
+    private static async Task<(bool Success, string Message)> RegisterRemoteAsync(
+        string fullName, string phoneOrEmail, string password)
+    {
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
+            var url = $"{AppConfig.GetCmsOrigin().TrimEnd('/')}/api/customers/register";
+            var res = await client.PostAsJsonAsync(url, new { fullName, phoneOrEmail, password });
+            if (res.IsSuccessStatusCode)
+                return (true, "Đăng ký thành công.");
+
+            var msg = await TryReadApiMessageAsync(res);
+            return (false, string.IsNullOrWhiteSpace(msg) ? "Đăng ký thất bại." : msg);
+        }
+        catch (Exception ex)
+        {
+            return (false, $"Không kết nối máy chủ ({ex.Message}).");
+        }
+    }
+
+    private static async Task<(bool Success, string Message, UserAccount? User)> LoginRemoteAsync(
+        string phoneOrEmail, string password)
+    {
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
+            var url = $"{AppConfig.GetCmsOrigin().TrimEnd('/')}/api/customers/login";
+            var res = await client.PostAsJsonAsync(url, new { phoneOrEmail, password });
+            if (!res.IsSuccessStatusCode)
+            {
+                var msg = await TryReadApiMessageAsync(res);
+                return (false, string.IsNullOrWhiteSpace(msg) ? "Đăng nhập thất bại." : msg, null);
+            }
+
+            var dto = await res.Content.ReadFromJsonAsync<RemoteAuthDto>(
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (dto is null)
+                return (false, "Phản hồi máy chủ không hợp lệ.", null);
+
+            var created = DateTime.TryParse(dto.CreatedAt, out var c) ? c : DateTime.Now;
+            var user = new UserAccount
+            {
+                Id = dto.Id,
+                FullName = dto.FullName ?? string.Empty,
+                PhoneOrEmail = dto.PhoneOrEmail ?? string.Empty,
+                CreatedAt = created
+            };
+            SetSession(user, true);
+            return (true, "Đăng nhập thành công.", user);
+        }
+        catch (Exception ex)
+        {
+            return (false, $"Không kết nối máy chủ ({ex.Message}).", null);
+        }
+    }
+
+    private static async Task<string?> TryReadApiMessageAsync(HttpResponseMessage res)
+    {
+        try
+        {
+            var json = await res.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("message", out var m))
+                return m.GetString();
+        }
+        catch
+        {
+            // bỏ qua
+        }
+
+        return null;
+    }
+
+    private sealed class RemoteAuthDto
+    {
+        public int Id { get; set; }
+        public string? FullName { get; set; }
+        public string? PhoneOrEmail { get; set; }
+        public string? CreatedAt { get; set; }
     }
 
     private static string GenerateSalt()

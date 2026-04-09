@@ -1,0 +1,68 @@
+@page
+@model TourGuideCMS.Pages.Plays.IndexModel
+@{
+    ViewData["Title"] = "Lượt phát thuyết minh";
+}
+
+<h1>Lượt phát thuyết minh (đồng bộ từ app)</h1>
+<p class="text-muted small">
+    App gửi <code>POST /api/plays/log</code> sau mỗi lượt nghe (QR, Map, AutoGeo, BusStop).
+    Cột <strong>QR</strong> giúp theo dõi quét mã tại điểm. Có thể bật khóa <code>App:MobileApiKey</code> trong cấu hình.
+</p>
+
+<h2 class="h5 mt-4">Tổng hợp theo địa điểm &amp; nguồn</h2>
+<table class="table table-sm table-bordered">
+    <thead class="table-light">
+        <tr>
+            <th>Địa điểm</th>
+            <th>Nguồn</th>
+            <th>Số lượt</th>
+        </tr>
+    </thead>
+    <tbody>
+    @foreach (var row in Model.Aggregates)
+    {
+        <tr class="@(row.Source.Equals("QR", StringComparison.OrdinalIgnoreCase) ? "table-warning" : null)">
+            <td>@row.PlaceName</td>
+            <td><span class="badge bg-secondary">@row.Source</span></td>
+            <td><strong>@row.Count</strong></td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+@if (Model.Aggregates.Count == 0)
+{
+    <p class="alert alert-light border">Chưa có dữ liệu đồng bộ.</p>
+}
+
+<h2 class="h5 mt-4">Chi tiết gần đây</h2>
+<div class="table-responsive">
+    <table class="table table-sm table-striped" style="font-size: 0.9rem;">
+        <thead>
+            <tr>
+                <th>Thời gian (UTC)</th>
+                <th>Địa điểm</th>
+                <th>Nguồn</th>
+                <th>Ngôn ngữ</th>
+                <th>Giây</th>
+                <th>Khách</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var p in Model.Recent)
+        {
+            <tr>
+                <td>@p.PlayedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                <td>@p.PlaceName</td>
+                <td>@p.Source</td>
+                <td>@(p.Language ?? "-")</td>
+                <td>@(p.DurationSeconds?.ToString("0.#") ?? "-")</td>
+                <td>@(p.CustomerAccount ?? "—")</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+<p><a asp-page="/Customers/Index">Khách hàng</a> · <a asp-page="/Index">← Trang chủ</a></p>

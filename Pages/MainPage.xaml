@@ -11,13 +11,14 @@
             <Border
                 BackgroundColor="#FF6200"
                 StrokeShape="RoundRectangle 14"
-                Padding="12,8"
+                Padding="14,10"
                 HorizontalOptions="Center">
                 <Label
-                    Text="Xin chào phố ẩm thực Vĩnh Khánh"
-                    FontSize="14"
+                    Text="Xin chào phố ẩm thực Vĩnh Khánh :)"
+                    FontSize="16"
                     FontAttributes="Bold"
-                    TextColor="White" />
+                    TextColor="White"
+                    HorizontalTextAlignment="Center" />
             </Border>
 
             <Label

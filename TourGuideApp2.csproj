@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
+		<!-- TourGuideCMS là project web riêng; không được glob vào MAUI (tránh lỗi Microsoft.AspNetCore.*). -->
+		<DefaultItemExcludes>$(DefaultItemExcludes);TourGuideCMS\**\*</DefaultItemExcludes>
 		<TargetFrameworks>net10.0-android;net10.0-ios;net10.0-maccatalyst</TargetFrameworks>
 		<TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net10.0-windows10.0.19041.0</TargetFrameworks>
 
@@ -126,13 +128,11 @@
 	  <Folder Include="Platforms\Android\Resources\NewFolder1\" />
 	  <Folder Include="Platforms\Android\Resources\NewFolder\" />
 	</ItemGroup>
-	<!-- ====================== LIÊN KẾT DB TỪ CMS (CÁCH ĐÚNG CHO MAUI) ====================== -->
+	<!-- ====================== DB POI trong gói app (logical name VinhKhanh.db) ====================== -->
 	<ItemGroup>
-		<!-- Copy VinhKhanh.db từ thư mục CMS (sibling folder) -->
-		<MauiAsset Include="..\TourGuideCMS\App_Data\VinhKhanh.db"
-		            Link="VinhKhanh.db">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-		</MauiAsset>
+		<!-- Ưu tiên DB do CMS tạo; không có thì dùng file đặt cạnh .csproj (nếu có). Không có file vẫn build được. -->
+		<MauiAsset Include="TourGuideCMS\App_Data\VinhKhanh.db" Link="VinhKhanh.db" Condition="Exists('TourGuideCMS\App_Data\VinhKhanh.db')" />
+		<MauiAsset Include="VinhKhanh.db" Link="VinhKhanh.db" Condition="!Exists('TourGuideCMS\App_Data\VinhKhanh.db') AND Exists('VinhKhanh.db')" />
 	</ItemGroup>
 	<ItemGroup>
 	  <MauiAsset Include="Platforms\Android\Assets\pho-am-thuc-vinh-khanh-oc-dao-1707245308.jpg">

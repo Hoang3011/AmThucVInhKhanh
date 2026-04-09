@@ -14,6 +14,7 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
 builder.Services.AddAuthorization();
 builder.Services.AddRazorPages();
 builder.Services.AddSingleton<PlaceRepository>();
+builder.Services.AddSingleton<CustomerAccountRepository>();
 
 var app = builder.Build();
 
@@ -36,6 +37,113 @@ app.MapGet("/api/places", async (PlaceRepository repo) =>
     });
 });
 
+static bool MobileKeyOk(HttpRequest req, IConfiguration config)
+{
+    var expected = config["App:MobileApiKey"];
+    if (string.IsNullOrEmpty(expected))
+        return true;
+    return string.Equals(req.Headers["X-Mobile-Key"], expected, StringComparison.Ordinal);
+}
+
+// --- Tài khoản khách (app MAUI) ---
+app.MapPost("/api/customers/register", async (HttpRequest req, CustomerAccountRepository repo) =>
+{
+    var body = await System.Text.Json.JsonSerializer.DeserializeAsync<RegisterBody>(
+        req.Body,
+        new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+    if (body is null)
+        return Results.BadRequest(new { message = "Body không hợp lệ." });
+
+    var (ok, message, user) = await repo.RegisterAsync(body.FullName, body.PhoneOrEmail, body.Password);
+    if (!ok || user is null)
+        return Results.BadRequest(new { message });
+
+    return Results.Json(new
+    {
+        id = user.Id,
+        fullName = user.FullName,
+        phoneOrEmail = user.PhoneOrEmail,
+        createdAt = user.CreatedAtUtc.ToString("O")
+    });
+});
+
+app.MapPost("/api/customers/login", async (HttpRequest req, CustomerAccountRepository repo) =>
+{
+    var body = await System.Text.Json.JsonSerializer.DeserializeAsync<LoginBody>(
+        req.Body,
+        new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+    if (body is null)
+        return Results.BadRequest(new { message = "Body không hợp lệ." });
+
+    var (ok, message, user) = await repo.LoginAsync(body.PhoneOrEmail, body.Password);
+    if (!ok || user is null)
+        return Results.Json(new { message }, statusCode: 401);
+
+    return Results.Json(new
+    {
+        id = user.Id,
+        fullName = user.FullName,
+        phoneOrEmail = user.PhoneOrEmail,
+        createdAt = user.CreatedAtUtc.ToString("O")
+    });
+});
+
+// Đồng bộ lượt phát thuyết minh (QR / Map / AutoGeo / BusStop)
+app.MapPost("/api/plays/log", async (HttpRequest req, CustomerAccountRepository repo, IConfiguration config) =>
+{
+    if (!MobileKeyOk(req, config))
+        return Results.Unauthorized();
+
+    var body = await System.Text.Json.JsonSerializer.DeserializeAsync<PlayLogBody>(
+        req.Body,
+        new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+    if (body is null)
+        return Results.BadRequest(new { message = "Body không hợp lệ." });
+
+    DateTime played = DateTime.UtcNow;
+    if (!string.IsNullOrWhiteSpace(body.PlayedAtUtc) && DateTime.TryParse(body.PlayedAtUtc, out var parsed))
+        played = parsed.ToUniversalTime();
+
+    await repo.AddPlayAsync(
+        body.CustomerUserId,
+        body.PlaceName ?? "",
+        body.Source ?? "",
+        body.Language,
+        body.DurationSeconds,
+        played);
+
+    return Results.Ok(new { ok = true });
+});
+
 app.MapRazorPages();
 
+await using (var scope = app.Services.CreateAsyncScope())
+{
+    var customers = scope.ServiceProvider.GetRequiredService<CustomerAccountRepository>();
+    await customers.EnsureSchemaAsync();
+}
+
 app.Run();
+
+internal sealed class RegisterBody
+{
+    public string FullName { get; set; } = "";
+    public string PhoneOrEmail { get; set; } = "";
+    public string Password { get; set; } = "";
+}
+
+internal sealed class LoginBody
+{
+    public string PhoneOrEmail { get; set; } = "";
+    public string Password { get; set; } = "";
+}
+
+internal sealed class PlayLogBody
+{
+    public int? CustomerUserId { get; set; }
+    public string? PlaceName { get; set; }
+    public string? Source { get; set; }
+    public string? Language { get; set; }
+    public double? DurationSeconds { get; set; }
+    public string? PlayedAtUtc { get; set; }
+}

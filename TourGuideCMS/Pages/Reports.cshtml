@@ -1,16 +1,20 @@
 @page
 @model TourGuideCMS.Pages.ReportsModel
 @{
-    ViewData["Title"] = "Lịch sử & Tour";
+    ViewData["Title"] = "Hướng dẫn & mở rộng";
 }
 
-<h1>Lịch sử sử dụng & quản lý tour</h1>
+<h1>Hướng dẫn báo cáo &amp; mở rộng</h1>
 
-<div class="alert alert-info">
-    <strong>Gợi ý cho đồ án:</strong> Lượt nghe / thời gian trung bình hiện lưu <strong>trên điện thoại</strong> (file JSON trong app).
-    Bạn có thể: (1) demo bằng màn <strong>Lịch sử</strong> trên app, hoặc (2) sau này thêm API POST từ app lên server.
+<div class="alert alert-success">
+    <strong>Lượt phát trên server:</strong> xem <a asp-page="/Plays/Index">Lượt phát</a> — dữ liệu do app gửi lên qua <code>POST /api/plays/log</code>
+    (cùng host với <code>/api/places</code>). Có thể đặt khóa <code>App:MobileApiKey</code> và cấu hình cùng khóa trong app.
 </div>
 
-<p class="mb-2"><strong>Quản lý tour:</strong> nếu đề yêu cầu nhiều tuyến, có thể thêm bảng <code>Tour</code> + bảng nối <code>TourPlace</code> trong SQLite và mở rộng CMS — hiện tại app đi theo một khu (phố Vĩnh Khánh).</p>
+<div class="alert alert-info">
+    <strong>Lịch sử cục bộ trên điện thoại:</strong> app vẫn lưu file JSON; màn <strong>Lịch sử</strong> trên app dùng cho demo ngoài tuyến.
+</div>
 
-<p><a asp-page="/Index">← Về trang chủ</a></p>
+<p class="mb-2"><strong>Quản lý tour:</strong> nếu đề yêu cầu nhiều tuyến, có thể thêm bảng <code>Tour</code> + <code>TourPlace</code> trong SQLite và mở rộng CMS — hiện tại app đi một khu (phố Vĩnh Khánh).</p>
+
+<p><a asp-page="/Plays/Index">→ Lượt phát</a> · <a asp-page="/Customers/Index">→ Khách hàng</a> · <a asp-page="/Index">← Trang chủ</a></p>
