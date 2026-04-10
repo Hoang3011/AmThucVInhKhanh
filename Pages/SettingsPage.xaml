@@ -41,13 +41,6 @@
                         HeightRequest="44" />
             </HorizontalStackLayout>
 
-            <Button Text="Test kết nối"
-                    Clicked="OnTestClicked"
-                    BackgroundColor="#FF6200"
-                    TextColor="White"
-                    CornerRadius="10"
-                    HeightRequest="44" />
-
             <Label x:Name="effectiveUrlLabel"
                    FontSize="12"
                    TextColor="#455A64" />

@@ -64,13 +64,25 @@
                                HeightRequest="44" />
 
                         <Label Text="Mật khẩu" FontSize="13" TextColor="#37474F" />
-                        <Entry x:Name="passwordEntry"
-                               Placeholder="Tối thiểu 6 ký tự"
-                               PlaceholderColor="#90A4AE"
-                               TextColor="#263238"
-                               IsPassword="True"
-                               BackgroundColor="#F5F7FA"
-                               HeightRequest="44" />
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <Entry x:Name="passwordEntry"
+                                   Grid.Column="0"
+                                   Placeholder="Tối thiểu 6 ký tự"
+                                   PlaceholderColor="#90A4AE"
+                                   TextColor="#263238"
+                                   IsPassword="True"
+                                   BackgroundColor="#F5F7FA"
+                                   HeightRequest="44" />
+                            <Button x:Name="toggleLoginPasswordButton"
+                                    Grid.Column="1"
+                                    Text="👁"
+                                    Clicked="OnToggleLoginPasswordClicked"
+                                    BackgroundColor="#CFD8DC"
+                                    TextColor="#263238"
+                                    CornerRadius="10"
+                                    WidthRequest="52"
+                                    HeightRequest="44" />
+                        </Grid>
 
                         <HorizontalStackLayout Spacing="8">
                             <Button Text="Đăng nhập"

@@ -6,7 +6,7 @@ using TourGuideCMS.Services;
 
 namespace TourGuideCMS.Pages.Places;
 
-[Authorize]
+[Authorize(Roles = "Admin")]
 public class EditModel : PageModel
 {
     private readonly PlaceRepository _db;

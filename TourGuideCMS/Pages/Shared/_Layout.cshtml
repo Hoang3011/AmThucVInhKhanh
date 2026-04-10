@@ -14,13 +14,18 @@
                 <a class="navbar-brand" asp-page="/Index">TourGuide CMS</a>
                 <div class="navbar-collapse">
                     <ul class="navbar-nav me-auto">
-                        @if (User.Identity?.IsAuthenticated == true)
+                        @if (User.Identity?.IsAuthenticated == true && User.IsInRole("Admin"))
                         {
                             <li class="nav-item"><a class="nav-link" asp-page="/Index">Trang chủ</a></li>
                             <li class="nav-item"><a class="nav-link" asp-page="/Places/Index">POI</a></li>
+                            <li class="nav-item"><a class="nav-link" asp-page="/Owners/Index">Chủ quán</a></li>
                             <li class="nav-item"><a class="nav-link" asp-page="/Customers/Index">Khách hàng</a></li>
                             <li class="nav-item"><a class="nav-link" asp-page="/Plays/Index">Lượt phát</a></li>
                             <li class="nav-item"><a class="nav-link" asp-page="/Reports">Hướng dẫn</a></li>
+                        }
+                        else if (User.Identity?.IsAuthenticated == true && User.IsInRole("Owner"))
+                        {
+                            <li class="nav-item"><a class="nav-link" asp-page="/Owner/Index">Lượt phát quán tôi</a></li>
                         }
                     </ul>
                     @if (User.Identity?.IsAuthenticated == true)

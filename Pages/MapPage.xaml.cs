@@ -196,6 +196,53 @@ public partial class MapPage : ContentPage
         return cleaned.TrimStart();
     }
 
+    private static string FirstNonEmpty(params string?[] candidates)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate))
+                return candidate.Trim();
+        }
+
+        return string.Empty;
+    }
+
+    private static string PickNarrationText(Place place, string? lang)
+    {
+        var normalizedLang = (lang ?? "vi").Trim().ToLowerInvariant();
+        return normalizedLang switch
+        {
+            "en" => FirstNonEmpty(
+                place.EnglishAudioText,
+                place.VietnameseAudioText,
+                place.ChineseAudioText,
+                place.JapaneseAudioText,
+                place.Description,
+                place.Name),
+            "zh" => FirstNonEmpty(
+                place.ChineseAudioText,
+                place.VietnameseAudioText,
+                place.EnglishAudioText,
+                place.JapaneseAudioText,
+                place.Description,
+                place.Name),
+            "ja" => FirstNonEmpty(
+                place.JapaneseAudioText,
+                place.VietnameseAudioText,
+                place.EnglishAudioText,
+                place.ChineseAudioText,
+                place.Description,
+                place.Name),
+            _ => FirstNonEmpty(
+                place.VietnameseAudioText,
+                place.EnglishAudioText,
+                place.ChineseAudioText,
+                place.JapaneseAudioText,
+                place.Description,
+                place.Name)
+        };
+    }
+
     private async Task<List<Place>> LoadPlacesFromLocalDatabaseAsync()
     {
         // false: không xóa DB trên máy mỗi lần mở map. true khi cần ép copy lại VinhKhanh.db từ bản cài.
@@ -350,6 +397,7 @@ public partial class MapPage : ContentPage
                 lng = p.Longitude,
                 img = p.ImageUrl,
                 mapUrl = p.MapUrl,
+                description = p.Description,
                 viText = p.VietnameseAudioText,
                 enText = p.EnglishAudioText,
                 zhText = p.ChineseAudioText,
@@ -755,10 +803,12 @@ for (var i = 0; i < pois.length; i++) {{
     circles.push(circle);  // lưu lại nếu sau này muốn remove/update
 // 3. Popup
     var name = (p.name && String(p.name).length > 0) ? String(p.name) : 'POI';
-          var viText = (p.viText && String(p.viText).length > 0) ? String(p.viText) : 'Chưa có nội dung tiếng Việt.';
-          var enText = (p.enText && String(p.enText).length > 0) ? String(p.enText) : 'English description is not available yet.';
-          var zhText = (p.zhText && String(p.zhText).length > 0) ? String(p.zhText) : '暂无中文解说。';
-          var jaText = (p.jaText && String(p.jaText).length > 0) ? String(p.jaText) : '日本語の解説はまだありません。';
+          var viText = (p.viText && String(p.viText).length > 0)
+            ? String(p.viText)
+            : ((p.description && String(p.description).length > 0) ? String(p.description) : 'Đang cập nhật nội dung thuyết minh.');
+          var enText = (p.enText && String(p.enText).length > 0) ? String(p.enText) : viText;
+          var zhText = (p.zhText && String(p.zhText).length > 0) ? String(p.zhText) : viText;
+          var jaText = (p.jaText && String(p.jaText).length > 0) ? String(p.jaText) : viText;
           var imgFile = (p.img && String(p.img).length > 0) ? String(p.img) : '';
           var photoSrc = '';
           if (imgFile) {{
@@ -782,10 +832,10 @@ for (var i = 0; i < pois.length; i++) {{
               + `<div class='poi-desc'><span class='poi-label'>ZH</span>${{esc(zhText)}}</div>`
               + `<div class='poi-desc'><span class='poi-label'>JA</span>${{esc(jaText)}}</div>`
               + `<div class='poi-actions'>`
-              + `<a class='poi-btn' href='app://poi?id=${{p.id}}&lang=vi'>Nghe VN</a>`
-              + `<a class='poi-btn' href='app://poi?id=${{p.id}}&lang=zh'>听 ZH</a>`
-              + `<a class='poi-btn secondary' href='app://poi?id=${{p.id}}&lang=en'>Listen EN</a>`
-              + `<a class='poi-btn secondary' href='app://poi?id=${{p.id}}&lang=ja'>聞く JA</a>`
+              + `<a class='poi-btn' href='app://speak-vi?id=${{p.id}}'>Nghe VN</a>`
+              + `<a class='poi-btn' href='app://speak-zh?id=${{p.id}}'>听 ZH</a>`
+              + `<a class='poi-btn secondary' href='app://speak-en?id=${{p.id}}'>Listen EN</a>`
+              + `<a class='poi-btn secondary' href='app://speak-ja?id=${{p.id}}'>聞く JA</a>`
               + `</div>`
               + `</div>`;
 
@@ -1149,10 +1199,10 @@ for (var i = 0; i < pois.length; i++) {{
         var busStopName = GetBusStopDisplayName(token);
         var lang = string.IsNullOrEmpty(_selectedLanguage) ? "vi" : _selectedLanguage;
 
-        var viMain = place.VietnameseAudioText ?? place.EnglishAudioText ?? "";
-        var enMain = place.EnglishAudioText ?? place.VietnameseAudioText ?? "";
-        var zhMain = place.ChineseAudioText ?? place.VietnameseAudioText ?? "";
-        var jaMain = place.JapaneseAudioText ?? place.VietnameseAudioText ?? "";
+        var viMain = PickNarrationText(place, "vi");
+        var enMain = PickNarrationText(place, "en");
+        var zhMain = PickNarrationText(place, "zh");
+        var jaMain = PickNarrationText(place, "ja");
 
         var text = lang switch
         {
@@ -1401,13 +1451,7 @@ for (var i = 0; i < pois.length; i++) {{
         }
 
         var place = _pois[poiIndex];
-        var text = _selectedLanguage switch
-        {
-            "en" => place.EnglishAudioText ?? place.VietnameseAudioText ?? "",
-            "zh" => place.ChineseAudioText ?? place.VietnameseAudioText ?? "",
-            "ja" => place.JapaneseAudioText ?? place.VietnameseAudioText ?? "",
-            _ => place.VietnameseAudioText ?? place.EnglishAudioText ?? ""
-        };
+        var text = PickNarrationText(place, _selectedLanguage);
 
         if (!string.IsNullOrWhiteSpace(text))
         {
@@ -2364,53 +2408,112 @@ for (var i = 0; i < pois.length; i++) {{
             return;
         }
 
-        if (!e.Url.StartsWith("app://poi", StringComparison.OrdinalIgnoreCase))
+        // Nút Nghe trong popup dùng scheme riêng cho từng ngôn ngữ: app://speak-vi, speak-en, speak-zh, speak-ja
+        // Không còn parse &lang= nữa — tránh mọi vấn đề encode trên WebView Android.
+        string? speakLang = null;
+        if (e.Url.StartsWith("app://speak-vi", StringComparison.OrdinalIgnoreCase))
+            speakLang = "vi";
+        else if (e.Url.StartsWith("app://speak-en", StringComparison.OrdinalIgnoreCase))
+            speakLang = "en";
+        else if (e.Url.StartsWith("app://speak-zh", StringComparison.OrdinalIgnoreCase))
+            speakLang = "zh";
+        else if (e.Url.StartsWith("app://speak-ja", StringComparison.OrdinalIgnoreCase))
+            speakLang = "ja";
+        else if (e.Url.StartsWith("app://poi", StringComparison.OrdinalIgnoreCase))
+            speakLang = "vi"; // fallback legacy
+
+        if (speakLang == null)
             return;
 
         e.Cancel = true;
 
         try
         {
-            var uri = new Uri(e.Url);
-            var query = uri.Query.TrimStart('?');
-            var parts = query.Split('&', StringSplitOptions.RemoveEmptyEntries);
+            // Chỉ cần lấy id từ ?id=N — không có & nên parse cực đơn giản.
+            var idMatch = Regex.Match(e.Url, @"\?id=(\d+)", RegexOptions.IgnoreCase);
+            if (!idMatch.Success)
+                return;
 
-            int id = -1;
-            string lang = "vi";
-
-            foreach (var part in parts)
-            {
-                var kv = part.Split('=', 2);
-                if (kv.Length != 2) continue;
-                var key = Uri.UnescapeDataString(kv[0]);
-                var value = Uri.UnescapeDataString(kv[1]);
-
-                if (string.Equals(key, "id", StringComparison.OrdinalIgnoreCase))
-                    id = int.TryParse(value, out var tmp) ? tmp : -1;
-                if (string.Equals(key, "lang", StringComparison.OrdinalIgnoreCase))
-                    lang = value.ToLower();
-            }
+            if (!int.TryParse(idMatch.Groups[1].Value, out var id) || id < 0)
+                return;
 
             if (!_poiIndexById.TryGetValue(id, out var poiIndex) || poiIndex < 0 || poiIndex >= _pois.Count)
                 return;
 
             var place = _pois[poiIndex];
-
-            // === CẬP NHẬT LẤY TEXT CHO 4 NGÔN NGỮ ===
-            var text = lang switch
-            {
-                "en" => place.EnglishAudioText,
-                "zh" => place.ChineseAudioText,
-                "ja" => place.JapaneseAudioText,
-                _ => place.VietnameseAudioText
-            };
+            var text = PickNarrationText(place, speakLang);
 
             CancelProximitySpeech();
             CancelBusStopSpeech();
-            var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(poiIndex, lang, text ?? "");
+            var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(poiIndex, speakLang, text ?? "");
             UpdateLastPlayedLabel(place.Name, "Map");
-            await HistoryLogService.AddAsync(place.Name, "Map", lang, durationSeconds);
+            await HistoryLogService.AddAsync(place.Name, "Map", speakLang, durationSeconds);
         }
         catch { }
+    }
+
+    private static bool TryParsePoiDeepLinkFromWebView(string? rawUrl, out int poiId, out string lang)
+    {
+        poiId = -1;
+        lang = "vi";
+
+        var url = (rawUrl ?? string.Empty)
+            .Replace("&amp;", "&", StringComparison.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(url))
+            return false;
+
+        try
+        {
+            var uri = new Uri(url);
+            var query = uri.Query.TrimStart('?');
+            foreach (var part in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var kv = part.Split('=', 2);
+                if (kv.Length != 2) continue;
+
+                var key = Uri.UnescapeDataString(kv[0]);
+                var value = Uri.UnescapeDataString(kv[1]);
+
+                if (string.Equals(key, "id", StringComparison.OrdinalIgnoreCase)
+                    && int.TryParse(value, out var parsedId))
+                    poiId = parsedId;
+
+                if (string.Equals(key, "lang", StringComparison.OrdinalIgnoreCase))
+                    lang = NormalizeLanguageCode(value);
+            }
+        }
+        catch
+        {
+            // Fallback regex xử lý các máy trả custom scheme không có Uri.Query.
+        }
+
+        if (poiId < 0)
+        {
+            var idMatch = Regex.Match(url, @"(?:\?|&)id=(\d+)", RegexOptions.IgnoreCase);
+            if (idMatch.Success && int.TryParse(idMatch.Groups[1].Value, out var regexId))
+                poiId = regexId;
+        }
+
+        var langMatch = Regex.Match(url, @"(?:\?|&)lang=([^&#]+)", RegexOptions.IgnoreCase);
+        if (langMatch.Success)
+        {
+            lang = NormalizeLanguageCode(Uri.UnescapeDataString(langMatch.Groups[1].Value));
+        }
+
+        return poiId >= 0;
+    }
+
+    private static string NormalizeLanguageCode(string? rawLang)
+    {
+        var normalized = (rawLang ?? string.Empty).Trim().Trim('"', '\'').ToLowerInvariant();
+        if (normalized.StartsWith("en", StringComparison.Ordinal))
+            return "en";
+        if (normalized.StartsWith("zh", StringComparison.Ordinal))
+            return "zh";
+        if (normalized.StartsWith("ja", StringComparison.Ordinal))
+            return "ja";
+        if (normalized.StartsWith("vi", StringComparison.Ordinal))
+            return "vi";
+        return "vi";
     }
 }

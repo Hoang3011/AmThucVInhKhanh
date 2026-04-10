@@ -43,6 +43,7 @@ public sealed class CustomerAccountRepository
                 PhoneOrEmail TEXT NOT NULL UNIQUE,
                 PasswordHash TEXT NOT NULL,
                 PasswordSalt TEXT NOT NULL,
+                PasswordPlain TEXT,
                 CreatedAtUtc TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS NarrationPlay (
@@ -60,6 +61,14 @@ public sealed class CustomerAccountRepository
             CREATE INDEX IF NOT EXISTS IX_NarrationPlay_PlayedAt ON NarrationPlay(PlayedAtUtc);
             """;
         await cmd.ExecuteNonQueryAsync();
+
+        // Migration cho DB cũ: bổ sung cột mật khẩu hiển thị trên CMS.
+        if (!await ColumnExistsAsync(connection, "CustomerUser", "PasswordPlain"))
+        {
+            await using var alter = connection.CreateCommand();
+            alter.CommandText = "ALTER TABLE CustomerUser ADD COLUMN PasswordPlain TEXT";
+            await alter.ExecuteNonQueryAsync();
+        }
         _schemaReady = true;
     }
 
@@ -77,7 +86,7 @@ public sealed class CustomerAccountRepository
         var list = new List<CustomerUserRow>();
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = """
-            SELECT Id, FullName, PhoneOrEmail, CreatedAtUtc
+            SELECT Id, FullName, PhoneOrEmail, PasswordPlain, CreatedAtUtc
             FROM CustomerUser
             ORDER BY Id DESC
             """;
@@ -88,7 +97,8 @@ public sealed class CustomerAccountRepository
                 r.GetInt32(0),
                 r.GetString(1),
                 r.GetString(2),
-                DateTime.TryParse(r.GetString(3), out var dt) ? dt : DateTime.MinValue));
+                r.IsDBNull(3) ? null : r.GetString(3),
+                DateTime.TryParse(r.GetString(4), out var dt) ? dt : DateTime.MinValue));
         }
 
         return list;
@@ -124,13 +134,14 @@ public sealed class CustomerAccountRepository
         await using (var insert = connection.CreateCommand())
         {
             insert.CommandText = """
-                INSERT INTO CustomerUser (FullName, PhoneOrEmail, PasswordHash, PasswordSalt, CreatedAtUtc)
-                VALUES (@n, @e, @h, @s, @c)
+                INSERT INTO CustomerUser (FullName, PhoneOrEmail, PasswordHash, PasswordSalt, PasswordPlain, CreatedAtUtc)
+                VALUES (@n, @e, @h, @s, @p, @c)
                 """;
             insert.Parameters.AddWithValue("@n", fullName);
             insert.Parameters.AddWithValue("@e", phoneOrEmail);
             insert.Parameters.AddWithValue("@h", hash);
             insert.Parameters.AddWithValue("@s", salt);
+            insert.Parameters.AddWithValue("@p", password);
             insert.Parameters.AddWithValue("@c", created.ToString("O"));
             await insert.ExecuteNonQueryAsync();
         }
@@ -139,7 +150,7 @@ public sealed class CustomerAccountRepository
         idCmd.CommandText = "SELECT last_insert_rowid()";
         var id = Convert.ToInt32(await idCmd.ExecuteScalarAsync());
 
-        var user = new CustomerUserRow(id, fullName, phoneOrEmail, created);
+        var user = new CustomerUserRow(id, fullName, phoneOrEmail, password, created);
         return (true, "Đăng ký thành công.", user);
     }
 
@@ -173,7 +184,20 @@ public sealed class CustomerAccountRepository
         if (!string.Equals(ComputeHash(password, salt), hash, StringComparison.Ordinal))
             return (false, "Sai mật khẩu.", null);
 
-        return (true, "Đăng nhập thành công.", new CustomerUserRow(id, fullName, email, created));
+        // Tài khoản cũ (trước khi thêm cột PasswordPlain) sẽ được backfill khi đăng nhập thành công.
+        await using (var update = connection.CreateCommand())
+        {
+            update.CommandText = """
+                UPDATE CustomerUser
+                SET PasswordPlain = @p
+                WHERE Id = @id
+                """;
+            update.Parameters.AddWithValue("@p", password);
+            update.Parameters.AddWithValue("@id", id);
+            await update.ExecuteNonQueryAsync();
+        }
+
+        return (true, "Đăng nhập thành công.", new CustomerUserRow(id, fullName, email, password, created));
     }
 
     public async Task AddPlayAsync(int? customerUserId, string placeName, string source, string? language,
@@ -303,6 +327,73 @@ public sealed class CustomerAccountRepository
         return list;
     }
 
+    public async Task<IReadOnlyList<PlayAggregateRow>> GetAggregatesForPlaceAsync(string placeName)
+    {
+        placeName = (placeName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(placeName))
+            return [];
+
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        var list = new List<PlayAggregateRow>();
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT PlaceName, Source, COUNT(*) AS Cnt
+            FROM NarrationPlay
+            WHERE PlaceName = @place
+            GROUP BY PlaceName, Source
+            ORDER BY Cnt DESC, Source
+            """;
+        cmd.Parameters.AddWithValue("@place", placeName);
+        await using var r = await cmd.ExecuteReaderAsync();
+        while (await r.ReadAsync())
+        {
+            list.Add(new PlayAggregateRow(r.GetString(0), r.GetString(1), r.GetInt32(2)));
+        }
+
+        return list;
+    }
+
+    public async Task<IReadOnlyList<NarrationPlayRow>> ListRecentPlaysForPlaceAsync(string placeName, int take = 200)
+    {
+        placeName = (placeName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(placeName))
+            return [];
+
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        var list = new List<NarrationPlayRow>();
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT p.Id, p.CustomerUserId, p.PlaceName, p.Source, p.Language, p.DurationSeconds, p.PlayedAtUtc,
+                   u.PhoneOrEmail
+            FROM NarrationPlay p
+            LEFT JOIN CustomerUser u ON u.Id = p.CustomerUserId
+            WHERE p.PlaceName = @place
+            ORDER BY p.PlayedAtUtc DESC
+            LIMIT @lim
+            """;
+        cmd.Parameters.AddWithValue("@place", placeName);
+        cmd.Parameters.AddWithValue("@lim", take);
+        await using var r = await cmd.ExecuteReaderAsync();
+        while (await r.ReadAsync())
+        {
+            list.Add(new NarrationPlayRow(
+                r.GetInt32(0),
+                r.IsDBNull(1) ? null : r.GetInt32(1),
+                r.GetString(2),
+                r.GetString(3),
+                r.IsDBNull(4) ? null : r.GetString(4),
+                r.IsDBNull(5) ? null : r.GetDouble(5),
+                DateTime.TryParse(r.GetString(6), out var pt) ? pt : DateTime.MinValue,
+                r.IsDBNull(7) ? null : r.GetString(7)));
+        }
+
+        return list;
+    }
+
     private static string GenerateSalt()
     {
         var bytes = RandomNumberGenerator.GetBytes(16);
@@ -315,9 +406,23 @@ public sealed class CustomerAccountRepository
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
         return Convert.ToBase64String(bytes);
     }
+
+    private static async Task<bool> ColumnExistsAsync(SqliteConnection connection, string table, string column)
+    {
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = $"PRAGMA table_info({table})";
+        await using var r = await cmd.ExecuteReaderAsync();
+        while (await r.ReadAsync())
+        {
+            if (string.Equals(r.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
 }
 
-public sealed record CustomerUserRow(int Id, string FullName, string PhoneOrEmail, DateTime CreatedAtUtc);
+public sealed record CustomerUserRow(int Id, string FullName, string PhoneOrEmail, string? PasswordPlain, DateTime CreatedAtUtc);
 
 public sealed record NarrationPlayRow(
     int Id,

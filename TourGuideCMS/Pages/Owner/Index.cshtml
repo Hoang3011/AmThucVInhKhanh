@@ -1,0 +1,64 @@
+@page
+@model TourGuideCMS.Pages.Owner.IndexModel
+@{
+    ViewData["Title"] = "Chủ quán";
+}
+
+<h1>Quản lý lượt phát POI của tôi</h1>
+
+@if (string.IsNullOrWhiteSpace(Model.PlaceName))
+{
+    <div class="alert alert-warning">Không tìm thấy thông tin POI của tài khoản chủ quán này.</div>
+}
+else
+{
+    <p class="text-muted">POI đang quản lý: <strong>@Model.PlaceName</strong></p>
+
+    <h2 class="h5 mt-4">Tổng lượt theo nguồn</h2>
+    <table class="table table-sm table-bordered">
+        <thead class="table-light">
+            <tr>
+                <th>Địa điểm</th>
+                <th>Nguồn</th>
+                <th>Số lượt</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var row in Model.Aggregates)
+        {
+            <tr class="@(row.Source.Equals("QR", StringComparison.OrdinalIgnoreCase) ? "table-warning" : null)">
+                <td>@row.PlaceName</td>
+                <td><span class="badge bg-secondary">@row.Source</span></td>
+                <td><strong>@row.Count</strong></td>
+            </tr>
+        }
+        </tbody>
+    </table>
+
+    <h2 class="h5 mt-4">Chi tiết gần đây</h2>
+    <div class="table-responsive">
+        <table class="table table-sm table-striped" style="font-size: 0.9rem;">
+            <thead>
+                <tr>
+                    <th>Thời gian (UTC)</th>
+                    <th>Nguồn</th>
+                    <th>Ngôn ngữ</th>
+                    <th>Giây</th>
+                    <th>Khách</th>
+                </tr>
+            </thead>
+            <tbody>
+            @foreach (var p in Model.Recent)
+            {
+                <tr>
+                    <td>@p.PlayedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                    <td>@p.Source</td>
+                    <td>@(p.Language ?? "-")</td>
+                    <td>@(p.DurationSeconds?.ToString("0.#") ?? "-")</td>
+                    <td>@(p.CustomerAccount ?? "—")</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}

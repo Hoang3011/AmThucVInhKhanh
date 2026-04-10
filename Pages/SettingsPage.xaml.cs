@@ -41,25 +41,5 @@ public partial class SettingsPage : ContentPage
         statusLabel.Text = "Đã xóa URL đã lưu (Preferences).";
     }
 
-    private async void OnTestClicked(object? sender, EventArgs e)
-    {
-        try
-        {
-            var places = await PlaceApiService.TryGetRemotePlacesAsync();
-            if (places is null)
-            {
-                statusLabel.Text = "Test thất bại: không tải được POI từ server (kiểm tra URL + mạng LAN).";
-                effectiveUrlLabel.Text = $"URL hiệu lực: {PlaceApiService.GetEffectiveApiUrl()}";
-                return;
-            }
-
-            statusLabel.Text = $"OK: tải được {places.Count} POI từ server.";
-            effectiveUrlLabel.Text = $"URL hiệu lực: {PlaceApiService.GetEffectiveApiUrl()}";
-        }
-        catch (Exception ex)
-        {
-            statusLabel.Text = $"Test lỗi: {ex.Message}";
-        }
-    }
 }
 

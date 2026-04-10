@@ -8,7 +8,15 @@ public static class HistoryLogService
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static readonly string FilePath = Path.Combine(FileSystem.AppDataDirectory, "history-log.json");
 
-    public static async Task<List<HistoryEntry>> GetAllAsync()
+    private static string GetCurrentAccountKey()
+    {
+        var raw = AuthService.CurrentUserAccount?.Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(raw))
+            return raw;
+        return "__guest__";
+    }
+
+    public static async Task<List<HistoryEntry>> GetForCurrentUserAsync()
     {
         await Gate.WaitAsync();
         try
@@ -18,7 +26,13 @@ public static class HistoryLogService
 
             await using var stream = File.OpenRead(FilePath);
             var items = await JsonSerializer.DeserializeAsync<List<HistoryEntry>>(stream);
-            return items ?? [];
+            var currentKey = GetCurrentAccountKey();
+            return (items ?? [])
+                .Where(x => string.Equals(
+                    (x.AccountKey ?? string.Empty).Trim().ToLowerInvariant(),
+                    currentKey,
+                    StringComparison.Ordinal))
+                .ToList();
         }
         finally
         {
@@ -48,7 +62,9 @@ public static class HistoryLogService
                 Source = source,
                 Language = language,
                 Timestamp = playedAt,
-                DurationSeconds = durationSeconds.HasValue ? Math.Round(durationSeconds.Value, 1) : null
+                DurationSeconds = durationSeconds.HasValue ? Math.Round(durationSeconds.Value, 1) : null,
+                AccountKey = GetCurrentAccountKey(),
+                CustomerUserId = AuthService.GetCustomerIdForServerSync()
             });
 
             await using var write = File.Create(FilePath);
@@ -67,8 +83,21 @@ public static class HistoryLogService
         await Gate.WaitAsync();
         try
         {
-            if (File.Exists(FilePath))
-                File.Delete(FilePath);
+            if (!File.Exists(FilePath))
+                return;
+
+            await using var read = File.OpenRead(FilePath);
+            var items = await JsonSerializer.DeserializeAsync<List<HistoryEntry>>(read) ?? [];
+            var currentKey = GetCurrentAccountKey();
+            var remaining = items
+                .Where(x => !string.Equals(
+                    (x.AccountKey ?? string.Empty).Trim().ToLowerInvariant(),
+                    currentKey,
+                    StringComparison.Ordinal))
+                .ToList();
+
+            await using var write = File.Create(FilePath);
+            await JsonSerializer.SerializeAsync(write, remaining);
         }
         finally
         {

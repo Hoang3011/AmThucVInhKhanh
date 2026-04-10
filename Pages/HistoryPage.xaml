@@ -14,12 +14,6 @@
                     BackgroundColor="#1E88E5"
                     TextColor="White"
                     CornerRadius="10" />
-                <Button
-                    Text="Xóa tất cả"
-                    Clicked="OnClearAllClicked"
-                    BackgroundColor="#E53935"
-                    TextColor="White"
-                    CornerRadius="10" />
             </HorizontalStackLayout>
             <Label
                 x:Name="syncStatusLabel"

@@ -4,6 +4,9 @@ namespace TourGuideApp2;
 
 public partial class RegisterPage : ContentPage
 {
+    private bool _isRegisterPasswordVisible;
+    private bool _isRegisterConfirmPasswordVisible;
+
     public RegisterPage()
     {
         InitializeComponent();
@@ -33,5 +36,19 @@ public partial class RegisterPage : ContentPage
     private async void OnCancelClicked(object? sender, EventArgs e)
     {
         await Navigation.PopModalAsync();
+    }
+
+    private void OnToggleRegisterPasswordClicked(object? sender, EventArgs e)
+    {
+        _isRegisterPasswordVisible = !_isRegisterPasswordVisible;
+        passwordEntry.IsPassword = !_isRegisterPasswordVisible;
+        toggleRegisterPasswordButton.Text = _isRegisterPasswordVisible ? "🙈" : "👁";
+    }
+
+    private void OnToggleRegisterConfirmPasswordClicked(object? sender, EventArgs e)
+    {
+        _isRegisterConfirmPasswordVisible = !_isRegisterConfirmPasswordVisible;
+        confirmPasswordEntry.IsPassword = !_isRegisterConfirmPasswordVisible;
+        toggleRegisterConfirmPasswordButton.Text = _isRegisterConfirmPasswordVisible ? "🙈" : "👁";
     }
 }

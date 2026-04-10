@@ -7,5 +7,7 @@ public class HistoryEntry
     public string Language { get; set; } = "vi";
     public DateTime Timestamp { get; set; } = DateTime.Now;
     public double? DurationSeconds { get; set; }
+    public string? AccountKey { get; set; }
+    public int? CustomerUserId { get; set; }
 }
 

@@ -7,7 +7,8 @@
 <h1>Khách hàng đăng ký qua app</h1>
 <p class="text-muted small">
     Tài khoản được tạo khi app gọi <code>POST /api/customers/register</code> (cùng host với API POI).
-    Mật khẩu không hiển thị — chỉ quản lý danh sách.
+    Cột mật khẩu hiển thị theo dữ liệu đăng ký từ app (để tiện quản lý).
+    Với tài khoản cũ tạo trước khi có cột này, mật khẩu sẽ tự hiện sau lần đăng nhập thành công tiếp theo.
 </p>
 
 <table class="table table-sm table-striped">
@@ -16,6 +17,7 @@
             <th>Id</th>
             <th>Họ tên</th>
             <th>Email / SĐT</th>
+            <th>Mật khẩu</th>
             <th>Ngày tạo (UTC)</th>
         </tr>
     </thead>
@@ -26,6 +28,7 @@
             <td>@u.Id</td>
             <td>@u.FullName</td>
             <td>@u.PhoneOrEmail</td>
+            <td>@(string.IsNullOrWhiteSpace(u.PasswordPlain) ? "—" : u.PasswordPlain)</td>
             <td>@u.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm")</td>
         </tr>
     }

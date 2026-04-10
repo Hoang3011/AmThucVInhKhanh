@@ -21,7 +21,7 @@ public partial class HistoryPage : ContentPage
 
     private async Task LoadHistoryAsync()
     {
-        var local = await HistoryLogService.GetAllAsync();
+        var local = await HistoryLogService.GetForCurrentUserAsync();
         var fetch = await RemotePlayHistoryService.FetchForCurrentCustomerAsync();
 
         var serverList = fetch.Status == RemoteHistoryFetchStatus.Ok
@@ -208,15 +208,6 @@ public partial class HistoryPage : ContentPage
 
     private async void OnRefreshClicked(object? sender, EventArgs e)
     {
-        await LoadHistoryAsync();
-    }
-
-    private async void OnClearAllClicked(object? sender, EventArgs e)
-    {
-        var confirm = await DisplayAlertAsync("Xóa lịch sử", "Bạn có chắc muốn xóa toàn bộ lịch sử nghe/quét?", "Xóa", "Hủy");
-        if (!confirm) return;
-
-        await HistoryLogService.ClearAsync();
         await LoadHistoryAsync();
     }
 

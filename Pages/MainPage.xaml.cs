@@ -4,6 +4,9 @@ namespace TourGuideApp2;
 
 public partial class MainPage : ContentPage
 {
+    private bool _isLoginPasswordVisible;
+    private static bool _hasPlayedAppWelcome;
+
     public MainPage()
     {
         InitializeComponent();
@@ -14,6 +17,27 @@ public partial class MainPage : ContentPage
     {
         base.OnAppearing();
         RefreshAuthUi();
+        _ = PlayAppWelcomeOnceAsync();
+    }
+
+    private static async Task PlayAppWelcomeOnceAsync()
+    {
+        if (_hasPlayedAppWelcome)
+            return;
+
+        _hasPlayedAppWelcome = true;
+        try
+        {
+            await Task.Delay(350);
+            _ = await NarrationQueueService.EnqueuePoiOrTtsAsync(
+                -1,
+                "vi",
+                "Xin chào, chào mừng bạn đến với phố ẩm thực Vĩnh Khánh.");
+        }
+        catch
+        {
+            // Không chặn màn hình nếu TTS lỗi.
+        }
     }
 
     private async void OnLoginClicked(object? sender, EventArgs e)
@@ -32,6 +56,13 @@ public partial class MainPage : ContentPage
     private async void OnOpenRegisterClicked(object? sender, EventArgs e)
     {
         await Navigation.PushModalAsync(new RegisterPage());
+    }
+
+    private void OnToggleLoginPasswordClicked(object? sender, EventArgs e)
+    {
+        _isLoginPasswordVisible = !_isLoginPasswordVisible;
+        passwordEntry.IsPassword = !_isLoginPasswordVisible;
+        toggleLoginPasswordButton.Text = _isLoginPasswordVisible ? "🙈" : "👁";
     }
 
     private void OnLogoutClicked(object? sender, EventArgs e)

@@ -10,6 +10,32 @@
     Cột <strong>QR</strong> giúp theo dõi quét mã tại điểm. Có thể bật khóa <code>App:MobileApiKey</code> trong cấu hình.
 </p>
 
+<form method="get" class="row g-2 align-items-end mb-3">
+    <div class="col-12 col-md-5">
+        <label class="form-label mb-1">Lọc theo địa điểm</label>
+        <select name="place" class="form-select">
+            <option value="">Tất cả địa điểm</option>
+            @foreach (var p in Model.PlaceOptions)
+            {
+                if (string.Equals(Model.Place, p, StringComparison.OrdinalIgnoreCase))
+                {
+                    <option value="@p" selected>@p</option>
+                }
+                else
+                {
+                    <option value="@p">@p</option>
+                }
+            }
+        </select>
+    </div>
+    <div class="col-auto">
+        <button type="submit" class="btn btn-primary">Áp dụng</button>
+    </div>
+    <div class="col-auto">
+        <a asp-page="./Index" class="btn btn-outline-secondary">Bỏ lọc</a>
+    </div>
+</form>
+
 <h2 class="h5 mt-4">Tổng hợp theo địa điểm &amp; nguồn</h2>
 <table class="table table-sm table-bordered">
     <thead class="table-light">

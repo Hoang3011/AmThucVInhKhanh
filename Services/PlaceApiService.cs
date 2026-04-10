@@ -31,22 +31,13 @@ public static class PlaceApiService
     /// </summary>
     public static string GetEffectiveApiUrl()
     {
-        // Ưu tiên Preferences để không phải rebuild khi đổi máy/port chạy CMS.
-        // (Ví dụ chạy CMS trên laptop khác trong mạng LAN.)
-        var apiUrl = Preferences.Default.Get(PoiApiUrlPreferenceKey, string.Empty)?.Trim() ?? string.Empty;
-        // Nếu Preferences đang trỏ localhost (thường do test trên PC), bỏ qua để fallback sang URL đi kèm bản build.
-        if (!string.IsNullOrWhiteSpace(apiUrl) &&
-            (apiUrl.Contains("localhost", StringComparison.OrdinalIgnoreCase) ||
-             apiUrl.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase)))
-        {
-            apiUrl = string.Empty;
-        }
-
+        // App khách dùng URL đóng gói trong AppConfig để tránh user chỉnh sai cấu hình.
+        var apiUrl = AppConfig.DefaultPoiApiUrl.Trim();
         if (!string.IsNullOrWhiteSpace(apiUrl))
             return apiUrl;
 
-        // Fallback: URL đi kèm bản phát hành.
-        return AppConfig.DefaultPoiApiUrl.Trim();
+        // Fallback an toàn cho các bản build cũ đã lưu URL trước đó.
+        return (Preferences.Default.Get(PoiApiUrlPreferenceKey, string.Empty) ?? string.Empty).Trim();
     }
 
     public static bool HasRemoteApiConfigured()

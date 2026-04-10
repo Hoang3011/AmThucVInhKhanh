@@ -49,7 +49,16 @@ CREATE TABLE IF NOT EXISTS UserAccount (
             return (false, "Mật khẩu tối thiểu 6 ký tự.");
 
         if (!string.IsNullOrWhiteSpace(PlaceApiService.GetCmsBaseUrl()))
-            return await RegisterRemoteAsync(fullName, phoneOrEmail, password);
+        {
+            var remote = await RegisterRemoteAsync(fullName, phoneOrEmail, password);
+            if (remote.Success || remote.ServerReachable)
+                return (remote.Success, remote.Message);
+
+            var local = await RegisterLocalAsync(fullName, phoneOrEmail, password);
+            return local.Success
+                ? (true, "Máy chủ tạm thời không kết nối, đã đăng ký cục bộ thành công.")
+                : (false, $"Máy chủ tạm thời không kết nối. {local.Message}");
+        }
 
         return await RegisterLocalAsync(fullName, phoneOrEmail, password);
     }
@@ -63,7 +72,16 @@ CREATE TABLE IF NOT EXISTS UserAccount (
             return (false, "Vui lòng nhập tài khoản và mật khẩu.", null);
 
         if (!string.IsNullOrWhiteSpace(PlaceApiService.GetCmsBaseUrl()))
-            return await LoginRemoteAsync(phoneOrEmail, password);
+        {
+            var remote = await LoginRemoteAsync(phoneOrEmail, password);
+            if (remote.Success || remote.ServerReachable)
+                return (remote.Success, remote.Message, remote.User);
+
+            var local = await LoginLocalAsync(phoneOrEmail, password);
+            return local.Success
+                ? (true, "Máy chủ tạm thời không kết nối, đã đăng nhập cục bộ.", local.User)
+                : (false, $"Máy chủ tạm thời không kết nối. {local.Message}", null);
+        }
 
         return await LoginLocalAsync(phoneOrEmail, password);
     }
@@ -174,44 +192,47 @@ LIMIT 1;";
         Preferences.Default.Set(SessionIsRemoteKey, isRemoteSession);
     }
 
-    private static async Task<(bool Success, string Message)> RegisterRemoteAsync(
+    private static async Task<(bool Success, bool ServerReachable, string Message)> RegisterRemoteAsync(
         string fullName, string phoneOrEmail, string password)
     {
         try
         {
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
             var url = $"{PlaceApiService.GetCmsBaseUrl().TrimEnd('/')}/api/customers/register";
             var res = await client.PostAsJsonAsync(url, new { fullName, phoneOrEmail, password });
             if (res.IsSuccessStatusCode)
-                return (true, "Đăng ký thành công.");
+            {
+                await UpsertLocalAccountAsync(fullName, phoneOrEmail, password);
+                return (true, true, "Đăng ký thành công.");
+            }
 
             var msg = await TryReadApiMessageAsync(res);
-            return (false, string.IsNullOrWhiteSpace(msg) ? "Đăng ký thất bại." : msg);
+            return (false, true, string.IsNullOrWhiteSpace(msg) ? "Đăng ký thất bại." : msg);
         }
         catch (Exception ex)
         {
-            return (false, $"Không kết nối máy chủ ({ex.Message}).");
+            return (false, false, $"Không kết nối máy chủ ({ex.Message}).");
         }
     }
 
-    private static async Task<(bool Success, string Message, UserAccount? User)> LoginRemoteAsync(
+    private static async Task<(bool Success, bool ServerReachable, string Message, UserAccount? User)> LoginRemoteAsync(
         string phoneOrEmail, string password)
     {
         try
         {
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
             var url = $"{PlaceApiService.GetCmsBaseUrl().TrimEnd('/')}/api/customers/login";
             var res = await client.PostAsJsonAsync(url, new { phoneOrEmail, password });
             if (!res.IsSuccessStatusCode)
             {
                 var msg = await TryReadApiMessageAsync(res);
-                return (false, string.IsNullOrWhiteSpace(msg) ? "Đăng nhập thất bại." : msg, null);
+                return (false, true, string.IsNullOrWhiteSpace(msg) ? "Đăng nhập thất bại." : msg, null);
             }
 
             var dto = await res.Content.ReadFromJsonAsync<RemoteAuthDto>(
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             if (dto is null)
-                return (false, "Phản hồi máy chủ không hợp lệ.", null);
+                return (false, true, "Phản hồi máy chủ không hợp lệ.", null);
 
             var created = DateTime.TryParse(dto.CreatedAt, out var c) ? c : DateTime.Now;
             var user = new UserAccount
@@ -221,12 +242,13 @@ LIMIT 1;";
                 PhoneOrEmail = dto.PhoneOrEmail ?? string.Empty,
                 CreatedAt = created
             };
+            await UpsertLocalAccountAsync(user.FullName, user.PhoneOrEmail, password, created);
             SetSession(user, true);
-            return (true, "Đăng nhập thành công.", user);
+            return (true, true, "Đăng nhập thành công.", user);
         }
         catch (Exception ex)
         {
-            return (false, $"Không kết nối máy chủ ({ex.Message}).", null);
+            return (false, false, $"Không kết nối máy chủ ({ex.Message}).", null);
         }
     }
 
@@ -266,5 +288,41 @@ LIMIT 1;";
         var input = $"{password}:{salt}";
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
         return Convert.ToBase64String(bytes);
+    }
+
+    /// <summary>Mirror tài khoản remote về SQLite cục bộ để login được cả khi mất mạng.</summary>
+    private static async Task UpsertLocalAccountAsync(
+        string fullName,
+        string phoneOrEmail,
+        string password,
+        DateTime? createdAtUtc = null)
+    {
+        fullName = (fullName ?? string.Empty).Trim();
+        phoneOrEmail = (phoneOrEmail ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(fullName) || string.IsNullOrWhiteSpace(phoneOrEmail) || string.IsNullOrWhiteSpace(password))
+            return;
+
+        await using var connection = new SqliteConnection(Constants.DatabasePath);
+        await connection.OpenAsync();
+
+        var createdAt = (createdAtUtc ?? DateTime.UtcNow).ToUniversalTime().ToString("O");
+        var salt = GenerateSalt();
+        var hash = ComputeHash(password, salt);
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = @"
+INSERT INTO UserAccount (FullName, PhoneOrEmail, PasswordHash, PasswordSalt, CreatedAt)
+VALUES (@fullName, @phoneOrEmail, @passwordHash, @passwordSalt, @createdAt)
+ON CONFLICT(PhoneOrEmail) DO UPDATE SET
+    FullName = excluded.FullName,
+    PasswordHash = excluded.PasswordHash,
+    PasswordSalt = excluded.PasswordSalt,
+    CreatedAt = excluded.CreatedAt;";
+        cmd.Parameters.AddWithValue("@fullName", fullName);
+        cmd.Parameters.AddWithValue("@phoneOrEmail", phoneOrEmail);
+        cmd.Parameters.AddWithValue("@passwordHash", hash);
+        cmd.Parameters.AddWithValue("@passwordSalt", salt);
+        cmd.Parameters.AddWithValue("@createdAt", createdAt);
+        await cmd.ExecuteNonQueryAsync();
     }
 }

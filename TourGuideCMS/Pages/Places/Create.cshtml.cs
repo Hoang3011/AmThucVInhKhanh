@@ -6,12 +6,17 @@ using TourGuideCMS.Services;
 
 namespace TourGuideCMS.Pages.Places;
 
-[Authorize]
+[Authorize(Roles = "Admin")]
 public class CreateModel : PageModel
 {
     private readonly PlaceRepository _db;
+    private readonly CmsIdentityRepository _identity;
 
-    public CreateModel(PlaceRepository db) => _db = db;
+    public CreateModel(PlaceRepository db, CmsIdentityRepository identity)
+    {
+        _db = db;
+        _identity = identity;
+    }
 
     [BindProperty]
     public PlaceFormViewModel Input { get; set; } = new();
@@ -42,6 +47,7 @@ public class CreateModel : PageModel
         };
 
         await _db.InsertAsync(row);
+        await _identity.SyncOwnersForPlacesAsync(await _db.ListAsync());
         return RedirectToPage("Index");
     }
 }

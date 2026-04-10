@@ -4,7 +4,7 @@ using TourGuideCMS.Services;
 
 namespace TourGuideCMS.Pages.Customers;
 
-[Authorize]
+[Authorize(Roles = "Admin")]
 public class IndexModel : PageModel
 {
     private readonly CustomerAccountRepository _repo;

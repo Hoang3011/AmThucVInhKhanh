@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace TourGuideCMS.Pages;
 
-[Authorize]
+[Authorize(Roles = "Admin")]
 public class ReportsModel : PageModel
 {
     public void OnGet() { }

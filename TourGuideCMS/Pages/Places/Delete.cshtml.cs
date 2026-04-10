@@ -6,12 +6,17 @@ using TourGuideCMS.Services;
 
 namespace TourGuideCMS.Pages.Places;
 
-[Authorize]
+[Authorize(Roles = "Admin")]
 public class DeleteModel : PageModel
 {
     private readonly PlaceRepository _db;
+    private readonly CmsIdentityRepository _identity;
 
-    public DeleteModel(PlaceRepository db) => _db = db;
+    public DeleteModel(PlaceRepository db, CmsIdentityRepository identity)
+    {
+        _db = db;
+        _identity = identity;
+    }
 
     public PlaceRow? Place { get; private set; }
 
@@ -26,6 +31,7 @@ public class DeleteModel : PageModel
     public async Task<IActionResult> OnPostAsync(int id)
     {
         await _db.DeleteAsync(id);
+        await _identity.DisableOwnerByPlaceAsync(id);
         return RedirectToPage("Index");
     }
 }

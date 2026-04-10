@@ -16,6 +16,7 @@ builder.Services.AddAuthorization();
 builder.Services.AddRazorPages();
 builder.Services.AddSingleton<PlaceRepository>();
 builder.Services.AddSingleton<CustomerAccountRepository>();
+builder.Services.AddSingleton<CmsIdentityRepository>();
 
 var app = builder.Build();
 
@@ -183,8 +184,13 @@ app.MapRazorPages();
 
 await using (var scope = app.Services.CreateAsyncScope())
 {
+    var places = scope.ServiceProvider.GetRequiredService<PlaceRepository>();
+    var cmsIdentity = scope.ServiceProvider.GetRequiredService<CmsIdentityRepository>();
     var customers = scope.ServiceProvider.GetRequiredService<CustomerAccountRepository>();
     await customers.EnsureSchemaAsync();
+    await cmsIdentity.EnsureSchemaAsync();
+    await cmsIdentity.EnsureAdminSeedAsync(scope.ServiceProvider.GetRequiredService<IConfiguration>()["AdminPassword"]);
+    await cmsIdentity.SyncOwnersForPlacesAsync(await places.ListAsync());
 }
 
 app.Run();

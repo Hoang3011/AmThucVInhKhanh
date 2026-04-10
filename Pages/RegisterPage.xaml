@@ -37,20 +37,42 @@
                            TextColor="#111827" />
 
                     <Label Text="Mật khẩu" FontSize="13" FontAttributes="Bold" TextColor="#1F2937" />
-                    <Entry x:Name="passwordEntry"
-                           Placeholder="Tối thiểu 6 ký tự"
-                           PlaceholderColor="#94A3B8"
-                           IsPassword="True"
-                           BackgroundColor="#F8FAFC"
-                           TextColor="#111827" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <Entry x:Name="passwordEntry"
+                               Grid.Column="0"
+                               Placeholder="Tối thiểu 6 ký tự"
+                               PlaceholderColor="#94A3B8"
+                               IsPassword="True"
+                               BackgroundColor="#F8FAFC"
+                               TextColor="#111827" />
+                        <Button x:Name="toggleRegisterPasswordButton"
+                                Grid.Column="1"
+                                Text="👁"
+                                Clicked="OnToggleRegisterPasswordClicked"
+                                BackgroundColor="#CFD8DC"
+                                TextColor="#263238"
+                                CornerRadius="10"
+                                WidthRequest="52" />
+                    </Grid>
 
                     <Label Text="Xác nhận mật khẩu" FontSize="13" FontAttributes="Bold" TextColor="#1F2937" />
-                    <Entry x:Name="confirmPasswordEntry"
-                           Placeholder="Nhập lại mật khẩu"
-                           PlaceholderColor="#94A3B8"
-                           IsPassword="True"
-                           BackgroundColor="#F8FAFC"
-                           TextColor="#111827" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <Entry x:Name="confirmPasswordEntry"
+                               Grid.Column="0"
+                               Placeholder="Nhập lại mật khẩu"
+                               PlaceholderColor="#94A3B8"
+                               IsPassword="True"
+                               BackgroundColor="#F8FAFC"
+                               TextColor="#111827" />
+                        <Button x:Name="toggleRegisterConfirmPasswordButton"
+                                Grid.Column="1"
+                                Text="👁"
+                                Clicked="OnToggleRegisterConfirmPasswordClicked"
+                                BackgroundColor="#CFD8DC"
+                                TextColor="#263238"
+                                CornerRadius="10"
+                                WidthRequest="52" />
+                    </Grid>
 
                     <HorizontalStackLayout Spacing="10">
                         <Button Text="Hủy"
