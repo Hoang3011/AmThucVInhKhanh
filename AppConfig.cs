@@ -6,7 +6,7 @@ namespace TourGuideApp2;
 /// </summary>
 public static class AppConfig
 {
-    public const string DefaultPoiApiUrl = "http://192.168.31.212:5095/api/places";
+    public const string DefaultPoiApiUrl = "";
     public const string DefaultPoiApiKey = "";
 
     /// <summary>Khóa trùng <c>App:MobileApiKey</c> trên CMS (để trống = không kiểm tra).</summary>
