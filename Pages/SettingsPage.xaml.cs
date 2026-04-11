@@ -21,6 +21,7 @@ public partial class SettingsPage : ContentPage
     {
         var saved = Preferences.Default.Get(PlaceApiService.PoiApiUrlPreferenceKey, string.Empty) ?? string.Empty;
         poiApiUrlEntry.Text = saved;
+        cmsMobileKeyEntry.Text = Preferences.Default.Get(PlaceApiService.CmsMobileApiKeyPreferenceKey, string.Empty) ?? string.Empty;
         effectiveUrlLabel.Text = $"URL hiệu lực: {PlaceApiService.GetEffectiveApiUrl()}";
         statusLabel.Text = string.Empty;
     }
@@ -29,8 +30,15 @@ public partial class SettingsPage : ContentPage
     {
         var url = (poiApiUrlEntry.Text ?? string.Empty).Trim();
         Preferences.Default.Set(PlaceApiService.PoiApiUrlPreferenceKey, url);
+
+        var key = (cmsMobileKeyEntry.Text ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(key))
+            Preferences.Default.Remove(PlaceApiService.CmsMobileApiKeyPreferenceKey);
+        else
+            Preferences.Default.Set(PlaceApiService.CmsMobileApiKeyPreferenceKey, key);
+
         effectiveUrlLabel.Text = $"URL hiệu lực: {PlaceApiService.GetEffectiveApiUrl()}";
-        statusLabel.Text = "Đã lưu.";
+        statusLabel.Text = "Đã lưu URL và khóa đồng bộ (nếu có).";
     }
 
     private void OnClearClicked(object? sender, EventArgs e)
@@ -39,6 +47,13 @@ public partial class SettingsPage : ContentPage
         poiApiUrlEntry.Text = string.Empty;
         effectiveUrlLabel.Text = $"URL hiệu lực: {PlaceApiService.GetEffectiveApiUrl()}";
         statusLabel.Text = "Đã xóa URL đã lưu (Preferences).";
+    }
+
+    private void OnClearMobileKeyClicked(object? sender, EventArgs e)
+    {
+        Preferences.Default.Remove(PlaceApiService.CmsMobileApiKeyPreferenceKey);
+        cmsMobileKeyEntry.Text = string.Empty;
+        statusLabel.Text = "Đã xóa khóa đồng bộ CMS.";
     }
 
 }

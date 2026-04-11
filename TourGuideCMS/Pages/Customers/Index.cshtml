@@ -19,6 +19,7 @@
             <th>Email / SĐT</th>
             <th>Mật khẩu</th>
             <th>Ngày tạo (UTC)</th>
+            <th>Tuyến / Heatmap</th>
         </tr>
     </thead>
     <tbody>
@@ -30,6 +31,11 @@
             <td>@u.PhoneOrEmail</td>
             <td>@(string.IsNullOrWhiteSpace(u.PasswordPlain) ? "—" : u.PasswordPlain)</td>
             <td>@u.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm")</td>
+            <td>
+                <a asp-page="/Customers/Route" asp-route-id="@u.Id">Tuyến</a>
+                ·
+                <a asp-page="/Customers/Heatmap" asp-route-id="@u.Id">Heatmap</a>
+            </td>
         </tr>
     }
     </tbody>

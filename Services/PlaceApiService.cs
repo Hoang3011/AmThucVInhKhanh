@@ -8,6 +8,17 @@ public static class PlaceApiService
 {
     public const string PoiApiUrlPreferenceKey = "PoiApiUrl";
     public const string PoiApiKeyPreferenceKey = "PoiApiKey";
+    /// <summary>Trùng <c>App:MobileApiKey</c> trên CMS — cần khi CMS bật khóa (lượt phát, tuyến, lịch sử).</summary>
+    public const string CmsMobileApiKeyPreferenceKey = "CmsMobileApiKey";
+
+    /// <summary>Ưu tiên khóa đã lưu trong Cài đặt, sau đó <see cref="AppConfig.MobileApiKey"/>.</summary>
+    public static string GetMobileApiKeyForSync()
+    {
+        var fromPrefs = (Preferences.Default.Get(CmsMobileApiKeyPreferenceKey, string.Empty) ?? string.Empty).Trim();
+        if (!string.IsNullOrEmpty(fromPrefs))
+            return fromPrefs;
+        return (AppConfig.MobileApiKey ?? string.Empty).Trim();
+    }
 
     private static readonly HttpClient Http = new()
     {

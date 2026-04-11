@@ -1,0 +1,58 @@
+@page
+@model TourGuideCMS.Pages.Customers.RouteModel
+@{
+    ViewData["Title"] = $"Tuyến di chuyển — {Model.Customer?.FullName}";
+}
+
+<h1>Tuyến di chuyển</h1>
+<p>
+    <strong>@Model.Customer?.FullName</strong> (@Model.Customer?.PhoneOrEmail) — Id <code>@Model.Id</code>
+    · @Model.PointCount điểm đồng bộ từ app
+</p>
+
+<p>
+    <a asp-page="Heatmap" asp-route-id="@Model.Id" class="btn btn-outline-primary btn-sm">Xem heatmap</a>
+    <a asp-page="Index" class="btn btn-outline-secondary btn-sm">← Danh sách khách</a>
+</p>
+
+@if (Model.PointCount == 0)
+{
+    <p class="alert alert-info">Chưa có dữ liệu tuyến trên máy chủ (khách cần đăng nhập app qua máy chủ và di chuyển để đồng bộ).</p>
+}
+else
+{
+    <form method="post" asp-page-handler="DeleteRoute" class="mb-2" onsubmit="return confirm('Xóa toàn bộ tuyến đã lưu cho khách này trên server?');">
+        <input type="hidden" asp-for="Id" />
+        <button type="submit" class="btn btn-danger btn-sm">Xóa tuyến trên server</button>
+    </form>
+}
+
+<div id="routeMap" style="height: 520px; width: 100%; border-radius: 12px; border: 1px solid #ddd;"></div>
+
+@section Scripts {
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        (function () {
+            var raw = @Html.Raw(Model.RoutePointsJson);
+            var pts = Array.isArray(raw) ? raw : [];
+            function ll(p) {
+                var lat = (p.latitude != null) ? p.latitude : p.Latitude;
+                var lng = (p.longitude != null) ? p.longitude : p.Longitude;
+                return [lat, lng];
+            }
+            var latlngs = pts.map(ll).filter(function (x) { return x[0] != null && x[1] != null; });
+            var center = latlngs.length ? latlngs[0] : [10.7625, 106.705];
+            var map = L.map('routeMap').setView(center, 16);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OSM &copy; CARTO', subdomains: 'abcd'
+            }).addTo(map);
+            if (latlngs.length >= 2) {
+                L.polyline(latlngs, { color: '#0057D9', weight: 4, opacity: 0.9 }).addTo(map);
+                map.fitBounds(latlngs, { padding: [28, 28] });
+            } else if (latlngs.length === 1) {
+                L.circleMarker(latlngs[0], { radius: 8, color: '#0057D9', fillColor: '#3388ff', fillOpacity: 0.8 }).addTo(map);
+            }
+        })();
+    </script>
+}

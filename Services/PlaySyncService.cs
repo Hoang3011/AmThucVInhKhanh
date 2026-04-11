@@ -36,10 +36,12 @@ public static class PlaySyncService
 
             using var req = new HttpRequestMessage(HttpMethod.Post, url);
             req.Content = JsonContent.Create(body);
-            if (!string.IsNullOrWhiteSpace(AppConfig.MobileApiKey))
-                req.Headers.TryAddWithoutValidation("X-Mobile-Key", AppConfig.MobileApiKey);
+            var mobileKey = PlaceApiService.GetMobileApiKeyForSync();
+            if (!string.IsNullOrWhiteSpace(mobileKey))
+                req.Headers.TryAddWithoutValidation("X-Mobile-Key", mobileKey);
 
-            await Http.SendAsync(req).ConfigureAwait(false);
+            using var res = await Http.SendAsync(req).ConfigureAwait(false);
+            _ = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
         }
         catch
         {

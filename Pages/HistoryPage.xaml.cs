@@ -83,8 +83,9 @@ public partial class HistoryPage : ContentPage
                 ($"Đồng bộ CMS: OK — {fetch.Items.Count} lượt trên máy chủ (đã gộp với cục bộ, trùng giờ sẽ gộp 1 dòng).",
                     Color.FromArgb("#2E7D32")),
             RemoteHistoryFetchStatus.SkippedNotRemoteSession =>
-                ($"Đồng bộ CMS: chưa bật — {fetch.Message}",
-                    Color.FromArgb("#E65100")),
+                ($"Đồng bộ CMS: {fetch.Message}", Color.FromArgb("#546E7A")),
+            RemoteHistoryFetchStatus.SkippedLocalSession =>
+                ($"Đồng bộ CMS: {fetch.Message}", Color.FromArgb("#5D4037")),
             RemoteHistoryFetchStatus.SkippedNoCmsUrl =>
                 ($"Đồng bộ CMS: {fetch.Message}", Color.FromArgb("#E65100")),
             RemoteHistoryFetchStatus.Unauthorized =>

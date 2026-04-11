@@ -180,6 +180,23 @@ app.MapGet("/api/plays/history", async (HttpRequest req, CustomerAccountReposito
     });
 });
 
+// Đồng bộ tuyến di chuyển từ app — mỗi CustomerUserId một snapshot JSON (admin xem Tuyến / Heatmap).
+app.MapPost("/api/customers/route-sync", async (HttpRequest req, CustomerAccountRepository repo, IConfiguration config) =>
+{
+    if (!MobileKeyOk(req, config))
+        return Results.Unauthorized();
+
+    var body = await System.Text.Json.JsonSerializer.DeserializeAsync<RouteSyncBody>(
+        req.Body,
+        new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+    if (body is null || body.CustomerUserId <= 0)
+        return Results.BadRequest(new { message = "Thiếu customerUserId hoặc body không hợp lệ." });
+
+    var json = System.Text.Json.JsonSerializer.Serialize(body.Points ?? []);
+    await repo.UpsertRouteSnapshotAsync(body.CustomerUserId, json);
+    return Results.Ok(new { ok = true });
+});
+
 app.MapRazorPages();
 
 await using (var scope = app.Services.CreateAsyncScope())
@@ -216,4 +233,18 @@ internal sealed class PlayLogBody
     public string? Language { get; set; }
     public double? DurationSeconds { get; set; }
     public string? PlayedAtUtc { get; set; }
+}
+
+internal sealed class RouteSyncBody
+{
+    public int CustomerUserId { get; set; }
+    public List<RoutePointSyncItem>? Points { get; set; }
+}
+
+internal sealed class RoutePointSyncItem
+{
+    public double Latitude { get; set; }
+    public double Longitude { get; set; }
+    public string? TimestampUtc { get; set; }
+    public string? Source { get; set; }
 }

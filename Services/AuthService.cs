@@ -74,13 +74,27 @@ CREATE TABLE IF NOT EXISTS UserAccount (
         if (!string.IsNullOrWhiteSpace(PlaceApiService.GetCmsBaseUrl()))
         {
             var remote = await LoginRemoteAsync(phoneOrEmail, password);
-            if (remote.Success || remote.ServerReachable)
-                return (remote.Success, remote.Message, remote.User);
+            if (remote.Success)
+                return (true, remote.Message, remote.User);
 
-            var local = await LoginLocalAsync(phoneOrEmail, password);
-            return local.Success
-                ? (true, "Máy chủ tạm thời không kết nối, đã đăng nhập cục bộ.", local.User)
-                : (false, $"Máy chủ tạm thời không kết nối. {local.Message}", null);
+            if (!remote.ServerReachable)
+            {
+                var local = await LoginLocalAsync(phoneOrEmail, password);
+                if (!local.Success)
+                    return (false, $"Không kết nối máy chủ. {local.Message}".Trim(), null);
+
+                var remote2 = await LoginRemoteAsync(phoneOrEmail, password);
+                if (remote2.Success)
+                    return (true, "Đã đăng nhập và liên kết máy chủ.", remote2.User);
+
+                return (true, "Máy chủ tạm thời không kết nối, đã đăng nhập cục bộ.", local.User);
+            }
+
+            var localOnly = await LoginLocalAsync(phoneOrEmail, password);
+            if (localOnly.Success)
+                return (true, $"{remote.Message} Đã đăng nhập cục bộ.", localOnly.User);
+
+            return (false, remote.Message, null);
         }
 
         return await LoginLocalAsync(phoneOrEmail, password);
@@ -169,6 +183,19 @@ LIMIT 1;";
         return Preferences.Default.Get(SessionUserIdKey, 0);
     }
 
+    /// <summary>
+    /// Khóa tệp tuyến: <c>null</c> = khách; <c>r_id</c> = đăng nhập qua máy chủ; <c>l_id</c> = chỉ cục bộ SQLite.
+    /// </summary>
+    public static string? GetRouteOwnerKey()
+    {
+        if (!IsLoggedIn)
+            return null;
+        var id = Preferences.Default.Get(SessionUserIdKey, 0);
+        if (id <= 0)
+            return null;
+        return Preferences.Default.Get(SessionIsRemoteKey, false) ? $"r_{id}" : $"l_{id}";
+    }
+
     public static bool IsLoggedIn => Preferences.Default.ContainsKey(SessionUserIdKey);
     public static string CurrentUserName => Preferences.Default.Get(SessionUserNameKey, string.Empty);
     public static string CurrentUserAccount => Preferences.Default.Get(SessionUserAccountKey, string.Empty);
@@ -244,6 +271,7 @@ LIMIT 1;";
             };
             await UpsertLocalAccountAsync(user.FullName, user.PhoneOrEmail, password, created);
             SetSession(user, true);
+            CustomerRouteSyncService.ScheduleUploadAfterLocalSave();
             return (true, true, "Đăng nhập thành công.", user);
         }
         catch (Exception ex)

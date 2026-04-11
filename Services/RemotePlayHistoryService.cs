@@ -7,8 +7,8 @@ namespace TourGuideApp2.Services;
 
 public enum RemoteHistoryFetchStatus
 {
-    /// <summary>Không có tài khoản đăng nhập từ CMS — chỉ xem lịch sử cục bộ.</summary>
     SkippedNotRemoteSession,
+    SkippedLocalSession,
     /// <summary>Chưa có URL API POI / gốc CMS.</summary>
     SkippedNoCmsUrl,
     Unauthorized,
@@ -34,10 +34,18 @@ public static class RemotePlayHistoryService
     {
         if (AuthService.GetCustomerIdForServerSync() is null)
         {
+            if (AuthService.IsLoggedIn)
+            {
+                return new RemoteHistoryFetchResult(
+                    RemoteHistoryFetchStatus.SkippedLocalSession,
+                    [],
+                    "Phiên cục bộ: đăng xuất rồi đăng nhập lại khi CMS và mạng ổn để lấy Id khách từ máy chủ (đồng bộ Lượt phát / tuyến).");
+            }
+
             return new RemoteHistoryFetchResult(
                 RemoteHistoryFetchStatus.SkippedNotRemoteSession,
                 [],
-                "Đăng nhập bằng tài khoản trên máy chủ (tab Chính) để đồng bộ với trang Lượt phát CMS.");
+                "Đăng nhập tài khoản ở tab Chính để gộp lịch sử với trang Lượt phát CMS.");
         }
 
         var origin = PlaceApiService.GetCmsBaseUrl();
@@ -55,8 +63,9 @@ public static class RemotePlayHistoryService
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
-            if (!string.IsNullOrWhiteSpace(AppConfig.MobileApiKey))
-                req.Headers.TryAddWithoutValidation("X-Mobile-Key", AppConfig.MobileApiKey);
+            var mobileKey = PlaceApiService.GetMobileApiKeyForSync();
+            if (!string.IsNullOrWhiteSpace(mobileKey))
+                req.Headers.TryAddWithoutValidation("X-Mobile-Key", mobileKey);
 
             var res = await Http.SendAsync(req, ct).ConfigureAwait(false);
             if (res.StatusCode == HttpStatusCode.Unauthorized)
@@ -64,7 +73,7 @@ public static class RemotePlayHistoryService
                 return new RemoteHistoryFetchResult(
                     RemoteHistoryFetchStatus.Unauthorized,
                     [],
-                    "401: kiểm tra AppConfig.MobileApiKey trùng App:MobileApiKey trên CMS.");
+                    "401: trong Cài đặt nhập Khóa đồng bộ CMS trùng App:MobileApiKey (hoặc để trống khóa trên CMS).");
             }
 
             if (!res.IsSuccessStatusCode)

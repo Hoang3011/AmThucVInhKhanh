@@ -620,6 +620,39 @@ public partial class MapPage : ContentPage
           return true;
         }};
 
+        var navGuidePolyline = null;
+        window.clearNavigationGuide = function() {{
+          if (navGuidePolyline && map) {{
+            map.removeLayer(navGuidePolyline);
+            navGuidePolyline = null;
+          }}
+          return true;
+        }};
+        window.showNavigationGuideTo = function(destLat, destLng) {{
+          if (typeof destLat !== 'number' || typeof destLng !== 'number' || !map) return false;
+          var lat = currentLat, lng = currentLng;
+          if (window.userMarker && typeof window.userMarker.getLatLng === 'function') {{
+            var ull = window.userMarker.getLatLng();
+            if (ull && typeof ull.lat === 'number' && typeof ull.lng === 'number') {{
+              lat = ull.lat;
+              lng = ull.lng;
+            }}
+          }}
+          if (typeof lat !== 'number' || typeof lng !== 'number') return false;
+          if (window.clearNavigationGuide) window.clearNavigationGuide();
+          navGuidePolyline = L.polyline([[lat, lng], [destLat, destLng]], {{
+            color: '#FF6D00',
+            weight: 4,
+            dashArray: '10,12',
+            opacity: 0.95
+          }}).addTo(map);
+          try {{
+            map.fitBounds(L.latLngBounds([lat, lng], [destLat, destLng]), {{ padding: [40, 40], maxZoom: 17 }});
+          }} catch (err) {{}}
+          if (typeof setDbg === 'function') setDbg('Chỉ đường: ' + lat.toFixed(5) + ',' + lng.toFixed(5) + ' → ' + destLat.toFixed(5) + ',' + destLng.toFixed(5));
+          return true;
+        }};
+
         // Tránh tile.openstreetmap.org vì WebView mobile thường không gửi Referer => bị chặn.
         var tileProviders = [
           {{
@@ -687,6 +720,7 @@ public partial class MapPage : ContentPage
               + `<b>${{esc(s.name || 'Điểm dừng xe buýt')}}</b><br/>`
               + `Mã QR: <b>${{esc(s.code || '')}}</b><br/>`
               + `<a class='poi-btn secondary' href='app://poi?id=${{s.poiId}}&lang=vi'>Nghe ngay</a>`
+              + ` <a class='poi-btn' href='app://directions?lat=${{s.lat}}&lng=${{s.lng}}'>🧭 Chỉ đường</a>`
               + `</div>`;
             marker.bindPopup(popup);
           }});
@@ -832,6 +866,7 @@ for (var i = 0; i < pois.length; i++) {{
               + `<div class='poi-desc'><span class='poi-label'>ZH</span>${{esc(zhText)}}</div>`
               + `<div class='poi-desc'><span class='poi-label'>JA</span>${{esc(jaText)}}</div>`
               + `<div class='poi-actions'>`
+              + `<a class='poi-btn' href='app://directions?id=${{p.id}}' style='background:#0D47A1;color:#fff'>🧭 Chỉ đường</a>`
               + `<a class='poi-btn' href='app://speak-vi?id=${{p.id}}'>Nghe VN</a>`
               + `<a class='poi-btn' href='app://speak-zh?id=${{p.id}}'>听 ZH</a>`
               + `<a class='poi-btn secondary' href='app://speak-en?id=${{p.id}}'>Listen EN</a>`
@@ -921,7 +956,7 @@ for (var i = 0; i < pois.length; i++) {{
         try
         {
             await RouteTrackService.ClearAsync();
-            await mapView.EvaluateJavaScriptAsync("window.clearRoutePath && window.clearRoutePath();");
+            await mapView.EvaluateJavaScriptAsync("(window.clearNavigationGuide&&window.clearNavigationGuide());(window.clearRoutePath&&window.clearRoutePath());");
             await DisplayAlertAsync("Đã xóa tuyến", "Đã xóa toàn bộ dữ liệu tuyến di chuyển.", "OK");
         }
         catch (Exception ex)
@@ -2399,6 +2434,52 @@ for (var i = 0; i < pois.length; i++) {{
                         await Launcher.Default.OpenAsync(openUri);
                     return;
                 }
+            }
+            catch
+            {
+                // Bỏ qua.
+            }
+
+            return;
+        }
+
+        if (e.Url.StartsWith("app://directions", StringComparison.OrdinalIgnoreCase))
+        {
+            e.Cancel = true;
+            try
+            {
+                double? destLat = null;
+                double? destLng = null;
+
+                var idMatch = Regex.Match(e.Url, @"[?&]id=(\d+)", RegexOptions.IgnoreCase);
+                if (idMatch.Success
+                    && int.TryParse(idMatch.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid)
+                    && _poiIndexById.TryGetValue(pid, out var idx)
+                    && idx >= 0 && idx < _pois.Count)
+                {
+                    var p = _pois[idx];
+                    destLat = p.Latitude;
+                    destLng = p.Longitude;
+                }
+                else
+                {
+                    var latM = Regex.Match(e.Url, @"[?&]lat=([^&]+)", RegexOptions.IgnoreCase);
+                    var lngM = Regex.Match(e.Url, @"[?&]lng=([^&]+)", RegexOptions.IgnoreCase);
+                    if (latM.Success && lngM.Success
+                        && double.TryParse(Uri.UnescapeDataString(latM.Groups[1].Value), NumberStyles.Float, CultureInfo.InvariantCulture, out var la)
+                        && double.TryParse(Uri.UnescapeDataString(lngM.Groups[1].Value), NumberStyles.Float, CultureInfo.InvariantCulture, out var ln))
+                    {
+                        destLat = la;
+                        destLng = ln;
+                    }
+                }
+
+                if (destLat is null || destLng is null)
+                    return;
+
+                var d1 = destLat.Value.ToString(CultureInfo.InvariantCulture);
+                var d2 = destLng.Value.ToString(CultureInfo.InvariantCulture);
+                await mapView.EvaluateJavaScriptAsync($"window.showNavigationGuideTo && window.showNavigationGuideTo({d1},{d2});");
             }
             catch
             {

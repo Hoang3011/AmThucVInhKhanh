@@ -44,7 +44,7 @@ public class LoginModel : PageModel
         var username = (Username ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(Password))
         {
-            ErrorMessage = "Vui lòng nhập tài khoản và mật khẩu.";
+            ErrorMessage = "Vui lòng nhập tên đăng nhập và mật khẩu.";
             return Page();
         }
 

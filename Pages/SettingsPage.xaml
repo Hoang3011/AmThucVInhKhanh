@@ -25,6 +25,21 @@
                    TextColor="#263238"
                    PlaceholderColor="#90A4AE" />
 
+            <Label Text="Khóa đồng bộ CMS (X-Mobile-Key)"
+                   FontSize="14"
+                   FontAttributes="Bold"
+                   TextColor="{StaticResource Primary}" />
+            <Label Text="Nếu appsettings CMS có App:MobileApiKey thì phải nhập đúng — không thì lượt phát / tuyến bị 401."
+                   FontSize="12"
+                   TextColor="#546E7A" />
+            <Entry x:Name="cmsMobileKeyEntry"
+                   Placeholder="Dán khóa (để trống nếu CMS không bật khóa)"
+                   IsPassword="True"
+                   BackgroundColor="#F5F7FA"
+                   HeightRequest="44"
+                   TextColor="#263238"
+                   PlaceholderColor="#90A4AE" />
+
             <HorizontalStackLayout Spacing="10">
                 <Button Text="Lưu"
                         Clicked="OnSaveClicked"
@@ -36,6 +51,12 @@
                 <Button Text="Xóa URL đã lưu"
                         Clicked="OnClearClicked"
                         BackgroundColor="#E53935"
+                        TextColor="White"
+                        CornerRadius="10"
+                        HeightRequest="44" />
+                <Button Text="Xóa khóa CMS"
+                        Clicked="OnClearMobileKeyClicked"
+                        BackgroundColor="#78909C"
                         TextColor="White"
                         CornerRadius="10"
                         HeightRequest="44" />

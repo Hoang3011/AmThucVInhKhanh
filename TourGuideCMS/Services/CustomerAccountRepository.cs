@@ -59,6 +59,12 @@ public sealed class CustomerAccountRepository
             CREATE INDEX IF NOT EXISTS IX_NarrationPlay_Place ON NarrationPlay(PlaceName);
             CREATE INDEX IF NOT EXISTS IX_NarrationPlay_Source ON NarrationPlay(Source);
             CREATE INDEX IF NOT EXISTS IX_NarrationPlay_PlayedAt ON NarrationPlay(PlayedAtUtc);
+            CREATE TABLE IF NOT EXISTS CustomerRouteSnapshot (
+                CustomerUserId INTEGER PRIMARY KEY,
+                PointsJson TEXT NOT NULL,
+                UpdatedAtUtc TEXT NOT NULL,
+                FOREIGN KEY (CustomerUserId) REFERENCES CustomerUser(Id)
+            );
             """;
         await cmd.ExecuteNonQueryAsync();
 
@@ -302,6 +308,80 @@ public sealed class CustomerAccountRepository
         }
 
         return list;
+    }
+
+    public async Task<CustomerUserRow?> GetUserByIdAsync(int id)
+    {
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT Id, FullName, PhoneOrEmail, PasswordPlain, CreatedAtUtc
+            FROM CustomerUser WHERE Id = @id LIMIT 1
+            """;
+        cmd.Parameters.AddWithValue("@id", id);
+        await using var r = await cmd.ExecuteReaderAsync();
+        if (!await r.ReadAsync())
+            return null;
+
+        return new CustomerUserRow(
+            r.GetInt32(0),
+            r.GetString(1),
+            r.GetString(2),
+            r.IsDBNull(3) ? null : r.GetString(3),
+            DateTime.TryParse(r.GetString(4), out var dt) ? dt : DateTime.MinValue);
+    }
+
+    public async Task UpsertRouteSnapshotAsync(int customerUserId, string pointsJson)
+    {
+        pointsJson ??= "[]";
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        await using var ck = connection.CreateCommand();
+        ck.CommandText = "SELECT COUNT(1) FROM CustomerUser WHERE Id = @id";
+        ck.Parameters.AddWithValue("@id", customerUserId);
+        if (Convert.ToInt32(await ck.ExecuteScalarAsync()) == 0)
+            return;
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO CustomerRouteSnapshot (CustomerUserId, PointsJson, UpdatedAtUtc)
+            VALUES (@id, @j, @u)
+            ON CONFLICT(CustomerUserId) DO UPDATE SET
+                PointsJson = excluded.PointsJson,
+                UpdatedAtUtc = excluded.UpdatedAtUtc
+            """;
+        cmd.Parameters.AddWithValue("@id", customerUserId);
+        cmd.Parameters.AddWithValue("@j", pointsJson);
+        cmd.Parameters.AddWithValue("@u", DateTime.UtcNow.ToString("O"));
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task<string?> GetRouteSnapshotJsonAsync(int customerUserId)
+    {
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT PointsJson FROM CustomerRouteSnapshot WHERE CustomerUserId = @id LIMIT 1
+            """;
+        cmd.Parameters.AddWithValue("@id", customerUserId);
+        var o = await cmd.ExecuteScalarAsync();
+        return o as string;
+    }
+
+    public async Task DeleteRouteSnapshotAsync(int customerUserId)
+    {
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "DELETE FROM CustomerRouteSnapshot WHERE CustomerUserId = @id";
+        cmd.Parameters.AddWithValue("@id", customerUserId);
+        await cmd.ExecuteNonQueryAsync();
     }
 
     /// <summary>Tổng lượt phát theo địa điểm và nguồn (QR, Map, …).</summary>

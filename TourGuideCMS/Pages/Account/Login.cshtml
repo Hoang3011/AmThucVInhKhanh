@@ -7,12 +7,15 @@
 <div class="row justify-content-center">
     <div class="col-md-5">
         <h2 class="mb-3">CMS — Phố ẩm thực Vĩnh Khánh</h2>
-        <p class="text-muted small">Đăng nhập bằng tài khoản Admin hoặc Chủ quán.</p>
-        <p class="text-muted small">Admin mặc định: <code>admin</code> / <code>admin123</code> (hoặc mật khẩu từ cấu hình <code>AdminPassword</code>).</p>
+        <p class="text-muted small mb-2">Đăng nhập web: bắt buộc <strong>tên đăng nhập</strong> và <strong>mật khẩu</strong> (Admin toàn hệ thống hoặc Chủ quán từng POI).</p>
+        <ul class="text-muted small mb-3">
+            <li><strong>Admin:</strong> tên đăng nhập <code>admin</code> (chữ thường). Mật khẩu lấy từ <code>AdminPassword</code> trong <code>appsettings</code> — lần đầu chạy CMS, nếu chưa có tài khoản admin trong database thì hệ thống tạo với mật khẩu đó (nếu để trống cấu hình thì dùng mật khẩu mặc định nội bộ một lần).</li>
+            <li><strong>Chủ quán:</strong> tài khoản/mật khẩu do Admin quản lý — sau khi Admin đăng nhập, vào menu <strong>Chủ quán</strong> để xem tên đăng nhập từng quán và đặt lại mật khẩu nếu cần.</li>
+        </ul>
         <form method="post">
             <div class="mb-3">
-                <label class="form-label">Tài khoản</label>
-                <input type="text" class="form-control" asp-for="Username" autocomplete="username" required />
+                <label class="form-label">Tên đăng nhập</label>
+                <input type="text" class="form-control" asp-for="Username" autocomplete="username" placeholder="VD: admin hoặc owner3" required />
             </div>
             <div class="mb-3">
                 <label class="form-label">Mật khẩu</label>

@@ -21,7 +21,35 @@ public static class RouteTrackService
         PropertyNameCaseInsensitive = true
     };
 
-    private static string FilePath => Path.Combine(FileSystem.AppDataDirectory, "route_points.json");
+    static RouteTrackService()
+    {
+        TryMigrateLegacySharedRouteFile();
+    }
+
+    /// <summary>Bản cũ <c>route_points.json</c> dùng chung mọi tài khoản — chuyển thành tuyến <c>guest</c> một lần.</summary>
+    private static void TryMigrateLegacySharedRouteFile()
+    {
+        try
+        {
+            var legacy = Path.Combine(FileSystem.AppDataDirectory, "route_points.json");
+            var guest = Path.Combine(FileSystem.AppDataDirectory, "route_track_guest.json");
+            if (File.Exists(legacy) && !File.Exists(guest))
+                File.Move(legacy, guest);
+        }
+        catch
+        {
+            // bỏ qua
+        }
+    }
+
+    private static string GetRouteFilePath()
+    {
+        var owner = AuthService.GetRouteOwnerKey();
+        var tag = string.IsNullOrEmpty(owner) ? "guest" : owner;
+        foreach (var ch in Path.GetInvalidFileNameChars())
+            tag = tag.Replace(ch, '_');
+        return Path.Combine(FileSystem.AppDataDirectory, $"route_track_{tag}.json");
+    }
 
     public static async Task<List<RouteTrackPoint>> GetPointsAsync()
     {
@@ -38,6 +66,7 @@ public static class RouteTrackService
 
     public static async Task AppendPointAsync(double latitude, double longitude, string source)
     {
+        var shouldSync = false;
         await Gate.WaitAsync();
         try
         {
@@ -62,11 +91,15 @@ public static class RouteTrackService
             });
 
             await SavePointsUnsafeAsync(points);
+            shouldSync = true;
         }
         finally
         {
             Gate.Release();
         }
+
+        if (shouldSync)
+            CustomerRouteSyncService.ScheduleUploadAfterLocalSave();
     }
 
     public static async Task ClearAsync()
@@ -74,23 +107,27 @@ public static class RouteTrackService
         await Gate.WaitAsync();
         try
         {
-            if (File.Exists(FilePath))
-                File.Delete(FilePath);
+            var path = GetRouteFilePath();
+            if (File.Exists(path))
+                File.Delete(path);
         }
         finally
         {
             Gate.Release();
         }
+
+        CustomerRouteSyncService.ScheduleUploadAfterLocalSave();
     }
 
     private static async Task<List<RouteTrackPoint>> ReadPointsUnsafeAsync()
     {
         try
         {
-            if (!File.Exists(FilePath))
+            var path = GetRouteFilePath();
+            if (!File.Exists(path))
                 return [];
 
-            var json = await File.ReadAllTextAsync(FilePath);
+            var json = await File.ReadAllTextAsync(path);
             if (string.IsNullOrWhiteSpace(json))
                 return [];
 
@@ -102,10 +139,11 @@ public static class RouteTrackService
         }
     }
 
-    private static Task SavePointsUnsafeAsync(List<RouteTrackPoint> points)
+    private static async Task SavePointsUnsafeAsync(List<RouteTrackPoint> points)
     {
+        var path = GetRouteFilePath();
         var json = JsonSerializer.Serialize(points);
-        return File.WriteAllTextAsync(FilePath, json);
+        await File.WriteAllTextAsync(path, json);
     }
 
     private static double CalculateDistanceMeters(double lat1, double lon1, double lat2, double lon2)

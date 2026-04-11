@@ -1,0 +1,47 @@
+@page
+@model TourGuideCMS.Pages.Customers.HeatmapModel
+@{
+    ViewData["Title"] = $"Heatmap — {Model.Customer?.FullName}";
+}
+
+<h1>Heatmap (theo tuyến đồng bộ)</h1>
+<p>
+    <strong>@Model.Customer?.FullName</strong> — @Model.PointCount điểm
+    · <a asp-page="Route" asp-route-id="@Model.Id">Tuyến</a>
+    · <a asp-page="Index">← Khách hàng</a>
+</p>
+
+@if (Model.PointCount < 2)
+{
+    <p class="alert alert-warning">Cần ít nhất 2 điểm để heatmap có ý nghĩa.</p>
+}
+
+<div id="heatMap" style="height: 520px; width: 100%; border-radius: 12px; border: 1px solid #ddd;"></div>
+
+@section Scripts {
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <script>
+        (function () {
+            var raw = @Html.Raw(Model.RoutePointsJson);
+            var pts = Array.isArray(raw) ? raw : [];
+            function ll(p) {
+                var lat = (p.latitude != null) ? p.latitude : p.Latitude;
+                var lng = (p.longitude != null) ? p.longitude : p.Longitude;
+                return [lat, lng, 0.55 + (Math.random() * 0.25)];
+            }
+            var heatPts = pts.map(ll).filter(function (x) { return x[0] != null && x[1] != null; });
+            var center = heatPts.length ? [heatPts[0][0], heatPts[0][1]] : [10.7625, 106.705];
+            var map = L.map('heatMap').setView(center, 16);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
+                attribution: '&copy; OSM &copy; CARTO', subdomains: 'abcd'
+            }).addTo(map);
+            if (heatPts.length) {
+                L.heatLayer(heatPts, { radius: 26, blur: 16, maxZoom: 17 }).addTo(map);
+                var flat = heatPts.map(function (p) { return [p[0], p[1]]; });
+                map.fitBounds(flat, { padding: [32, 32] });
+            }
+        })();
+    </script>
+}
