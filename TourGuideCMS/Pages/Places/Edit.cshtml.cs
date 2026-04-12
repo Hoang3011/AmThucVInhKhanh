@@ -19,8 +19,7 @@ public class EditModel : PageModel
     public async Task<IActionResult> OnGetAsync(int id)
     {
         var p = await _db.GetAsync(id);
-        if (p is null)
-            return NotFound();
+        if (p is null) return NotFound();
 
         Input = new PlaceFormViewModel
         {
@@ -44,8 +43,10 @@ public class EditModel : PageModel
         return Page();
     }
 
-    public async Task<IActionResult> OnPostAsync()
+    public async Task<IActionResult> OnPostAsync(int id)
     {
+        Input.Id = id;                    // ← Bắt buộc, đảm bảo Id đúng
+
         if (!ModelState.IsValid)
             return Page();
 

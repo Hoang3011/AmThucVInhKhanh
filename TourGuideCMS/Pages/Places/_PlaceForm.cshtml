@@ -3,63 +3,69 @@
 <div class="row">
     <div class="col-md-6 mb-2">
         <label class="form-label">Tên POI *</label>
-        <input class="form-control" asp-for="Name" />
+        <input class="form-control" asp-for="Name" name="Input.Name" />
         <span asp-validation-for="Name" class="text-danger"></span>
     </div>
     <div class="col-md-3 mb-2">
         <label class="form-label">Ưu tiên</label>
-        <input type="number" class="form-control" asp-for="Priority" />
+        <input type="number" class="form-control" asp-for="Priority" name="Input.Priority" />
     </div>
     <div class="col-md-3 mb-2">
         <label class="form-label">Bán kính (m)</label>
-        <input type="number" step="0.1" class="form-control" asp-for="ActivationRadiusMeters" />
+        <input type="number" step="0.1" class="form-control" asp-for="ActivationRadiusMeters" name="Input.ActivationRadiusMeters" />
     </div>
 </div>
+
 <div class="row">
     <div class="col-md-6 mb-2">
         <label class="form-label">Địa chỉ</label>
-        <input class="form-control" asp-for="Address" />
+        <input class="form-control" asp-for="Address" name="Input.Address" />
     </div>
     <div class="col-md-6 mb-2">
         <label class="form-label">Đặc sản / ghi chú ngắn</label>
-        <input class="form-control" asp-for="Specialty" />
+        <input class="form-control" asp-for="Specialty" name="Input.Specialty" />
     </div>
 </div>
+
 <div class="row">
     <div class="col-md-6 mb-2">
         <label class="form-label">URL ảnh minh họa</label>
-        <input class="form-control" asp-for="ImageUrl" placeholder="tên file trong package hoặc URL" />
+        <input class="form-control" asp-for="ImageUrl" name="Input.ImageUrl" placeholder="tên file trong package hoặc URL" />
     </div>
 </div>
+
 <div class="row">
     <div class="col-md-4 mb-2">
         <label class="form-label">Latitude</label>
-        <input type="number" step="any" class="form-control" asp-for="Latitude" />
+        <input type="number" step="any" class="form-control" asp-for="Latitude" name="Input.Latitude" />
     </div>
     <div class="col-md-4 mb-2">
         <label class="form-label">Longitude</label>
-        <input type="number" step="any" class="form-control" asp-for="Longitude" />
+        <input type="number" step="any" class="form-control" asp-for="Longitude" name="Input.Longitude" />
     </div>
 </div>
+
 <div class="mb-2">
     <label class="form-label">Mô tả</label>
-    <textarea class="form-control" rows="3" asp-for="Description"></textarea>
+    <textarea class="form-control" rows="3" asp-for="Description" name="Input.Description"></textarea>
 </div>
+
 <hr />
 <p class="text-muted small">Bản dịch / script TTS (app ưu tiên file audio theo POI; không có file thì đọc text)</p>
+
 <div class="mb-2">
     <label class="form-label">Tiếng Việt</label>
-    <textarea class="form-control" rows="2" asp-for="VietnameseAudioText"></textarea>
+    <textarea class="form-control" rows="2" asp-for="VietnameseAudioText" name="Input.VietnameseAudioText"></textarea>
 </div>
 <div class="mb-2">
     <label class="form-label">English</label>
-    <textarea class="form-control" rows="2" asp-for="EnglishAudioText"></textarea>
+    <textarea class="form-control" rows="2" asp-for="EnglishAudioText" name="Input.EnglishAudioText"></textarea>
 </div>
 <div class="mb-2">
     <label class="form-label">中文</label>
-    <textarea class="form-control" rows="2" asp-for="ChineseAudioText"></textarea>
+    <textarea class="form-control" rows="2" asp-for="ChineseAudioText" name="Input.ChineseAudioText"></textarea>
 </div>
 <div class="mb-2">
     <label class="form-label">日本語</label>
-    <textarea class="form-control" rows="2" asp-for="JapaneseAudioText"></textarea>
+    <textarea class="form-control" rows="2" asp-for="JapaneseAudioText" name="Input.JapaneseAudioText"></textarea>
 </div>

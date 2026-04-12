@@ -2,6 +2,9 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using QRCoder;
 using TourGuideCMS.Services;
+using Microsoft.AspNetCore.Localization;
+using System.Globalization;
+using System.Linq;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -20,6 +23,15 @@ builder.Services.AddSingleton<CmsIdentityRepository>();
 
 var app = builder.Build();
 
+var localizationOptions = new RequestLocalizationOptions
+{
+    DefaultRequestCulture = new Microsoft.AspNetCore.Localization.RequestCulture("en-US"),
+    SupportedCultures = new[] { "en-US" }.Select(c => new System.Globalization.CultureInfo(c)).ToList(),
+    SupportedUICultures = new[] { "en-US" }.Select(c => new System.Globalization.CultureInfo(c)).ToList()
+};
+localizationOptions.RequestCultureProviders.Clear();
+
+app.UseRequestLocalization(localizationOptions);
 if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/Error");
 

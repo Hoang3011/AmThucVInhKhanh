@@ -5,6 +5,25 @@
 }
 
 <h1>Thêm POI</h1>
+@if (!ModelState.IsValid)
+{
+    <div class="alert alert-danger">
+        <strong>Có lỗi validation:</strong>
+        <ul>
+            @foreach (var state in ModelState)
+            {
+                if (state.Value?.Errors.Count > 0)
+                {
+                    var fieldName = state.Key.StartsWith("Input.") ? state.Key.Substring(6) : state.Key;
+                    foreach (var error in state.Value.Errors)
+                    {
+                        <li><strong>@fieldName</strong>: @error.ErrorMessage</li>
+                    }
+                }
+            }
+        </ul>
+    </div>
+}
 <form method="post">
     <partial name="_PlaceForm" model="Model.Input" />
     <button type="submit" class="btn btn-primary">Lưu</button>

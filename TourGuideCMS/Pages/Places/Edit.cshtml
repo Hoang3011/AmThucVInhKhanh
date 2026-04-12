@@ -5,9 +5,37 @@
 }
 
 <h1>Sửa POI #@Model.Input.Id</h1>
+
+<!-- Khối lỗi đã tối ưu - hiển thị sạch sẽ -->
+@if (!ModelState.IsValid)
+{
+    <div class="alert alert-danger">
+        <strong>Có lỗi validation:</strong>
+        <ul>
+            @foreach (var state in ModelState)
+            {
+                if (state.Value?.Errors.Count > 0)
+                {
+                    // Loại bỏ tiền tố "Input." cho đẹp
+                    var fieldName = state.Key.StartsWith("Input.")
+                        ? state.Key.Substring(6)
+                        : state.Key;
+
+                    foreach (var error in state.Value.Errors)
+                    {
+                        <li><strong>@fieldName</strong>: @error.ErrorMessage</li>
+                    }
+                }
+            }
+        </ul>
+    </div>
+}
+
 <form method="post">
     <input type="hidden" asp-for="Input.Id" />
+    
     <partial name="_PlaceForm" model="Model.Input" />
+
     <button type="submit" class="btn btn-primary">Cập nhật</button>
     <a asp-page="Index" class="btn btn-secondary">Hủy</a>
 </form>
