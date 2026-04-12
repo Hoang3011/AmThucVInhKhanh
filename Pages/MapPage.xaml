@@ -76,15 +76,6 @@
                     BackgroundColor="#E65100"
                     TextColor="White" />
                 <Button
-                    Text="🧹 Xóa tuyến"
-                    Clicked="OnClearRouteClicked"
-                    WidthRequest="132"
-                    HeightRequest="42"
-                    FontSize="12"
-                    CornerRadius="12"
-                    BackgroundColor="#607D8B"
-                    TextColor="White" />
-                <Button
                     Text="♻️ Reset demo"
                     Clicked="OnResetDemoStateClicked"
                     WidthRequest="132"
@@ -104,25 +95,13 @@
                     TextColor="White" />
 
                 <!-- Ở trong phòng: GPS/Fake GPS trên máy thường không đưa được chấm tới quán. Chọn quán = đặt mốc đúng tọa độ quán trong DB (mô phỏng đứng gần đó). -->
-                <Label
-                    Text="Mô phỏng gần quán (trong phòng)"
-                    FontSize="11"
-                    FontAttributes="Bold"
-                    TextColor="#333333"
-                    WidthRequest="200"
-                    Margin="0,6,0,0" />
-                <Label
-                    Text="Chọn tên quán — bản đồ đặt vị trí đúng chỗ quán (không dùng mũi tên)."
-                    FontSize="9"
-                    TextColor="#555555"
-                    WidthRequest="200"
-                    LineBreakMode="WordWrap" />
                 <Picker
                     x:Name="pickerSimulateNearPoi"
                     Title="Chọn quán…"
                     WidthRequest="200"
                     FontSize="11"
-                    SelectedIndexChanged="OnSimulateNearPoiPickerChanged" />
+                    SelectedIndexChanged="OnSimulateNearPoiPickerChanged" 
+                    BackgroundColor="#FF6200" TextColor="White"/>
 
                 <Grid ColumnDefinitions="60,60" 
                       RowDefinitions="60,60,60"
