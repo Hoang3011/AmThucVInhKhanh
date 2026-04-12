@@ -25,4 +25,8 @@ public class Place
     // Geofence theo từng POI.
     public double ActivationRadiusMeters { get; set; } = 35;
     public int Priority { get; set; } = 0;
+
+    /// <summary>0 = không bật trả phí demo; &gt;0 = giá VNĐ (demo) để mở thuyết minh nâng cao.</summary>
+    public double PremiumPriceDemo { get; set; }
+    public string PremiumVietnameseAudioText { get; set; } = string.Empty;
 }

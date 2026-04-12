@@ -12,7 +12,23 @@
 }
 else
 {
-    <p class="text-muted">POI đang quản lý: <strong>@Model.PlaceName</strong></p>
+    <p class="text-muted">POI đang quản lý: <strong>@Model.PlaceName</strong> (Id: @Model.PlaceId)</p>
+
+    <h2 class="h5 mt-4">Doanh thu trả phí demo (chỉ quán này)</h2>
+    <div class="card mb-4 border-success">
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="text-muted small">Tổng tiền demo đã thu</div>
+                    <div class="fs-4 fw-bold text-success">@Model.PremiumTotalVnd.ToString("N0") đ</div>
+                </div>
+                <div class="col-md-6">
+                    <div class="text-muted small">Số lượt khách đã trả (thiết bị)</div>
+                    <div class="fs-4 fw-bold">@Model.PremiumPaymentCount</div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <h2 class="h5 mt-4">Tổng lượt theo nguồn</h2>
     <table class="table table-sm table-bordered">

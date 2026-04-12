@@ -69,3 +69,12 @@
     <label class="form-label">日本語</label>
     <textarea class="form-control" rows="2" asp-for="JapaneseAudioText" name="Input.JapaneseAudioText"></textarea>
 </div>
+
+<hr />
+<p class="text-muted small">Trả phí demo để khách được nghe thuyết minh trên app hoặc sau khi quét QR (Zalo/trình duyệt). Để 0 = miễn phí. Nội dung đọc là các script TTS thường (VN/EN/ZH/JA) ở trên.</p>
+<div class="row">
+    <div class="col-md-4 mb-2">
+        <label class="form-label">Giá thuyết minh (VNĐ, demo)</label>
+        <input type="number" step="1000" min="0" class="form-control" asp-for="PremiumPriceDemo" name="Input.PremiumPriceDemo" />
+    </div>
+</div>

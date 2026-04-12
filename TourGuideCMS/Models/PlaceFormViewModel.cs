@@ -22,4 +22,5 @@ public sealed class PlaceFormViewModel
     public string ChineseAudioText { get; set; } = "";
     public string JapaneseAudioText { get; set; } = "";
     public string MapUrl { get; set; } = "";
+    public double PremiumPriceDemo { get; set; }
 }

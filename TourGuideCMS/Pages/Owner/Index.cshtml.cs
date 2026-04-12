@@ -18,8 +18,11 @@ public class IndexModel : PageModel
     }
 
     public string PlaceName { get; private set; } = "";
+    public int PlaceId { get; private set; }
     public IReadOnlyList<PlayAggregateRow> Aggregates { get; private set; } = Array.Empty<PlayAggregateRow>();
     public IReadOnlyList<NarrationPlayRow> Recent { get; private set; } = Array.Empty<NarrationPlayRow>();
+    public double PremiumTotalVnd { get; private set; }
+    public int PremiumPaymentCount { get; private set; }
 
     public async Task OnGetAsync()
     {
@@ -31,8 +34,10 @@ public class IndexModel : PageModel
         if (place is null)
             return;
 
+        PlaceId = placeId;
         PlaceName = place.Name;
         Aggregates = await _plays.GetAggregatesForPlaceAsync(place.Name);
         Recent = await _plays.ListRecentPlaysForPlaceAsync(place.Name, 200);
+        (PremiumTotalVnd, PremiumPaymentCount) = await _plays.GetPremiumRevenueForPlaceAsync(placeId);
     }
 }

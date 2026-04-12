@@ -65,18 +65,47 @@ public static class PlaceLocalRepository
                     return new LoadResult(places, LoadError.NoPlaceTable, null);
 
                 var hasMapUrl = await TableHasColumnAsync(connection, tableName, "MapUrl");
+                var hasPremium = await TableHasColumnAsync(connection, tableName, "PremiumPriceDemo");
 
                 await using var command = connection.CreateCommand();
-                command.CommandText = hasMapUrl
-                    ? $"""
+                if (hasMapUrl && hasPremium)
+                {
+                    command.CommandText = $"""
+                       SELECT Id, Name, Address, Specialty, ImageUrl,
+                              Latitude, Longitude, ActivationRadiusMeters, Priority,
+                              Description,
+                              VietnameseAudioText, EnglishAudioText,
+                              ChineseAudioText, JapaneseAudioText,
+                              PremiumPriceDemo, PremiumVietnameseAudioText, MapUrl
+                       FROM {tableName}
+                       """;
+                }
+                else if (hasMapUrl)
+                {
+                    command.CommandText = $"""
                        SELECT Id, Name, Address, Specialty, ImageUrl,
                               Latitude, Longitude, ActivationRadiusMeters, Priority,
                               Description,
                               VietnameseAudioText, EnglishAudioText,
                               ChineseAudioText, JapaneseAudioText, MapUrl
                        FROM {tableName}
-                       """
-                    : $"""
+                       """;
+                }
+                else if (hasPremium)
+                {
+                    command.CommandText = $"""
+                       SELECT Id, Name, Address, Specialty, ImageUrl,
+                              Latitude, Longitude, ActivationRadiusMeters, Priority,
+                              Description,
+                              VietnameseAudioText, EnglishAudioText,
+                              ChineseAudioText, JapaneseAudioText,
+                              PremiumPriceDemo, PremiumVietnameseAudioText
+                       FROM {tableName}
+                       """;
+                }
+                else
+                {
+                    command.CommandText = $"""
                        SELECT Id, Name, Address, Specialty, ImageUrl,
                               Latitude, Longitude, ActivationRadiusMeters, Priority,
                               Description,
@@ -84,10 +113,30 @@ public static class PlaceLocalRepository
                               ChineseAudioText, JapaneseAudioText
                        FROM {tableName}
                        """;
+                }
 
                 await using var readerData = await command.ExecuteReaderAsync();
                 while (await readerData.ReadAsync())
                 {
+                    double prem = 0;
+                    string premText = "";
+                    string map = "";
+                    if (hasMapUrl && hasPremium)
+                    {
+                        prem = readerData.GetDouble(14);
+                        premText = readerData.IsDBNull(15) ? "" : readerData.GetString(15);
+                        map = readerData.IsDBNull(16) ? "" : readerData.GetString(16);
+                    }
+                    else if (hasMapUrl)
+                    {
+                        map = readerData.IsDBNull(14) ? "" : readerData.GetString(14);
+                    }
+                    else if (hasPremium)
+                    {
+                        prem = readerData.GetDouble(14);
+                        premText = readerData.IsDBNull(15) ? "" : readerData.GetString(15);
+                    }
+
                     var place = new Place
                     {
                         Id = readerData.GetInt32(0),
@@ -104,7 +153,9 @@ public static class PlaceLocalRepository
                         EnglishAudioText = readerData.GetString(11),
                         ChineseAudioText = readerData.GetString(12),
                         JapaneseAudioText = readerData.GetString(13),
-                        MapUrl = hasMapUrl && !readerData.IsDBNull(14) ? readerData.GetString(14) : string.Empty
+                        MapUrl = map,
+                        PremiumPriceDemo = prem,
+                        PremiumVietnameseAudioText = premText
                     };
                     places.Add(place);
                 }

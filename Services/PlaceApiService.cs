@@ -8,6 +8,8 @@ public static class PlaceApiService
 {
     public const string PoiApiUrlPreferenceKey = "PoiApiUrl";
     public const string PoiApiKeyPreferenceKey = "PoiApiKey";
+    /// <summary>URL gốc CMS cho QR / Zalo (vd. <c>http://192.168.1.5:5095</c>) khi URL API đang trỏ localhost/emulator.</summary>
+    public const string CmsListenPayPublicBaseUrlKey = "CmsListenPayPublicBaseUrl";
     /// <summary>Trùng <c>App:MobileApiKey</c> trên CMS — cần khi CMS bật khóa (lượt phát, tuyến, lịch sử).</summary>
     public const string CmsMobileApiKeyPreferenceKey = "CmsMobileApiKey";
 
@@ -61,6 +63,53 @@ public static class PlaceApiService
         if (!string.IsNullOrWhiteSpace(apiUrl) && Uri.TryCreate(apiUrl.Trim(), UriKind.Absolute, out var u))
             return $"{u.Scheme}://{u.Authority}";
         return AppConfig.GetCmsOrigin();
+    }
+
+    private static bool IsHostUnusableForPhoneQr(string? host)
+    {
+        if (string.IsNullOrEmpty(host)) return true;
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return true;
+        if (host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)) return true;
+        if (host.Equals("::1", StringComparison.OrdinalIgnoreCase)) return true;
+        if (host.Equals("[::1]", StringComparison.OrdinalIgnoreCase)) return true;
+        if (host.Equals("10.0.2.2", StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    /// <summary>Gốc CMS dùng cho hyperlink /Listen/Pay (điện thoại khác, Zalo) — tránh localhost.</summary>
+    public static string GetCmsBaseUrlForListenPayLinks()
+    {
+        var explicitBase = (Preferences.Default.Get(CmsListenPayPublicBaseUrlKey, "") ?? "").Trim().TrimEnd('/');
+        if (!string.IsNullOrEmpty(explicitBase)
+            && Uri.TryCreate(explicitBase, UriKind.Absolute, out var ex)
+            && !IsHostUnusableForPhoneQr(ex.Host))
+            return $"{ex.Scheme}://{ex.Authority}";
+
+        var cms = GetCmsBaseUrl().TrimEnd('/');
+        if (!string.IsNullOrEmpty(cms)
+            && Uri.TryCreate(cms, UriKind.Absolute, out var u)
+            && !IsHostUnusableForPhoneQr(u.Host))
+            return $"{u.Scheme}://{u.Authority}";
+
+        foreach (var raw in new[] { AppConfig.DefaultPoiApiUrl.Trim(), (Preferences.Default.Get(PoiApiUrlPreferenceKey, "") ?? "").Trim() })
+        {
+            if (string.IsNullOrWhiteSpace(raw) || !Uri.TryCreate(raw, UriKind.Absolute, out var c))
+                continue;
+            if (IsHostUnusableForPhoneQr(c.Host))
+                continue;
+            return $"{c.Scheme}://{c.Authority}";
+        }
+
+        return cms;
+    }
+
+    /// <summary>URL trang trả phí demo (mở được trong Zalo/trình duyệt). Rỗng nếu chưa có gốc CMS.</summary>
+    public static string GetListenPayUrlForPlace(int placeId)
+    {
+        var b = GetCmsBaseUrlForListenPayLinks().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(b) || placeId <= 0)
+            return string.Empty;
+        return $"{b}/Listen/Pay?placeId={placeId}";
     }
 
     public static async Task<List<Place>?> TryGetRemotePlacesAsync()
@@ -196,7 +245,9 @@ public static class PlaceApiService
             JapaneseAudioText = dto.JapaneseAudioText ?? string.Empty,
             KoreanAudioText = dto.KoreanAudioText ?? string.Empty,
             ActivationRadiusMeters = dto.ActivationRadiusMeters > 0 ? dto.ActivationRadiusMeters : 35,
-            Priority = dto.Priority
+            Priority = dto.Priority,
+            PremiumPriceDemo = dto.PremiumPriceDemo,
+            PremiumVietnameseAudioText = dto.PremiumVietnameseAudioText ?? string.Empty
         };
     }
 
@@ -219,5 +270,7 @@ public static class PlaceApiService
         public double ActivationRadiusMeters { get; set; }
         public int Priority { get; set; }
         public string? QrPayload { get; set; }
+        public double PremiumPriceDemo { get; set; }
+        public string? PremiumVietnameseAudioText { get; set; }
     }
 }

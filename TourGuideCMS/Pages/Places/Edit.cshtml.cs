@@ -37,7 +37,8 @@ public class EditModel : PageModel
             EnglishAudioText = p.EnglishAudioText,
             ChineseAudioText = p.ChineseAudioText,
             JapaneseAudioText = p.JapaneseAudioText,
-            MapUrl = p.MapUrl
+            MapUrl = p.MapUrl,
+            PremiumPriceDemo = p.PremiumPriceDemo
         };
 
         return Page();
@@ -50,6 +51,7 @@ public class EditModel : PageModel
         if (!ModelState.IsValid)
             return Page();
 
+        var existing = await _db.GetAsync(id);
         await _db.UpdateAsync(new PlaceRow
         {
             Id = Input.Id,
@@ -66,7 +68,9 @@ public class EditModel : PageModel
             EnglishAudioText = Input.EnglishAudioText,
             ChineseAudioText = Input.ChineseAudioText,
             JapaneseAudioText = Input.JapaneseAudioText,
-            MapUrl = Input.MapUrl
+            MapUrl = Input.MapUrl,
+            PremiumPriceDemo = Input.PremiumPriceDemo,
+            PremiumVietnameseAudioText = existing?.PremiumVietnameseAudioText ?? ""
         });
 
         return RedirectToPage("Index");

@@ -43,7 +43,9 @@ public class CreateModel : PageModel
             EnglishAudioText = Input.EnglishAudioText,
             ChineseAudioText = Input.ChineseAudioText,
             JapaneseAudioText = Input.JapaneseAudioText,
-            MapUrl = Input.MapUrl
+            MapUrl = Input.MapUrl,
+            PremiumPriceDemo = Input.PremiumPriceDemo,
+            PremiumVietnameseAudioText = ""
         };
 
         await _db.InsertAsync(row);

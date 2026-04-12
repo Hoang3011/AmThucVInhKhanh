@@ -40,8 +40,41 @@ app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
 
+static bool IsHostUnusableForPhoneQr(string? host)
+{
+    if (string.IsNullOrEmpty(host)) return true;
+    if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return true;
+    if (host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)) return true;
+    if (host.Equals("::1", StringComparison.OrdinalIgnoreCase)) return true;
+    if (host.Equals("[::1]", StringComparison.OrdinalIgnoreCase)) return true;
+    // Emulator → máy dev; điện thoại thật quét QR không mở được.
+    if (host.Equals("10.0.2.2", StringComparison.OrdinalIgnoreCase)) return true;
+    return false;
+}
+
+static string SiteRootForLinks(HttpContext ctx, IConfiguration config)
+{
+    var configured = (config["App:PublicBaseUrl"] ?? "").Trim().TrimEnd('/');
+    if (!string.IsNullOrEmpty(configured))
+        return configured;
+
+    var requestHost = ctx.Request.Host.Host;
+    if (!IsHostUnusableForPhoneQr(requestHost))
+        return $"{ctx.Request.Scheme}://{ctx.Request.Host.Value}{ctx.Request.PathBase}".TrimEnd('/');
+
+    // Trình duyệt mở bằng localhost nhưng QR/Zalo cần URL LAN hoặc domain — cấu hình App:DevelopmentPublicBaseUrl (Development).
+    var devPublic = (config["App:DevelopmentPublicBaseUrl"] ?? "").Trim().TrimEnd('/');
+    if (!string.IsNullOrEmpty(devPublic))
+        return devPublic;
+
+    return $"{ctx.Request.Scheme}://{ctx.Request.Host.Value}{ctx.Request.PathBase}".TrimEnd('/');
+}
+
+static string ListenPayPayload(HttpContext ctx, IConfiguration config, int placeId)
+    => $"{SiteRootForLinks(ctx, config)}/Listen/Pay?placeId={placeId}";
+
 // API JSON cho app MAUI (PostgREST-style): cấu hình URL trong app trỏ tới https://.../api/places
-app.MapGet("/api/places", async (PlaceRepository repo) =>
+app.MapGet("/api/places", async (HttpContext http, PlaceRepository repo, IConfiguration config) =>
 {
     var rows = await repo.ListAsync();
     var payload = rows.Select(r => new
@@ -61,7 +94,8 @@ app.MapGet("/api/places", async (PlaceRepository repo) =>
         chineseAudioText = r.ChineseAudioText,
         japaneseAudioText = r.JapaneseAudioText,
         mapUrl = r.MapUrl,
-        qrPayload = $"app://poi?id={r.Id}"
+        premiumPriceDemo = r.PremiumPriceDemo,
+        qrPayload = ListenPayPayload(http, config, r.Id)
     });
     return Results.Json(payload, new System.Text.Json.JsonSerializerOptions
     {
@@ -70,14 +104,14 @@ app.MapGet("/api/places", async (PlaceRepository repo) =>
     });
 });
 
-// QR PNG cho từng POI: dùng payload ổn định theo Id (không phụ thuộc index).
-app.MapGet("/qr/places/{id:int}", async (int id, PlaceRepository repo) =>
+// QR PNG: HTTPS mở được trong Zalo/trình duyệt (trang trả phí demo).
+app.MapGet("/qr/places/{id:int}", async (HttpContext http, int id, PlaceRepository repo, IConfiguration config) =>
 {
     var place = await repo.GetAsync(id);
     if (place is null)
         return Results.NotFound();
 
-    var content = $"app://poi?id={place.Id}";
+    var content = ListenPayPayload(http, config, place.Id);
     using var gen = new QRCodeGenerator();
     using var data = gen.CreateQrCode(content, QRCodeGenerator.ECCLevel.Q);
     var png = new PngByteQRCode(data);
@@ -209,6 +243,63 @@ app.MapPost("/api/customers/route-sync", async (HttpRequest req, CustomerAccount
     return Results.Ok(new { ok = true });
 });
 
+// Thanh toán demo mở thuyết minh (app gửi DeviceInstallId + tùy chọn CustomerUserId).
+app.MapPost("/api/premium/pay-demo", async (HttpRequest req, PlaceRepository places, CustomerAccountRepository customers, IConfiguration config) =>
+{
+    if (!MobileKeyOk(req, config))
+        return Results.Unauthorized();
+
+    var body = await System.Text.Json.JsonSerializer.DeserializeAsync<PremiumPayDemoBody>(
+        req.Body,
+        new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+    if (body is null || body.PlaceId <= 0 || string.IsNullOrWhiteSpace(body.DeviceInstallId))
+        return Results.BadRequest(new { message = "Thiếu placeId hoặc deviceInstallId." });
+
+    var place = await places.GetAsync(body.PlaceId);
+    if (place is null)
+        return Results.NotFound(new { message = "Không có POI." });
+    if (place.PremiumPriceDemo <= 0)
+        return Results.BadRequest(new { message = "POI này không bật trả phí demo." });
+
+    var (ok, message, already) = await customers.RecordPremiumPaymentDemoAsync(
+        body.PlaceId,
+        body.DeviceInstallId,
+        place.PremiumPriceDemo,
+        body.CustomerUserId);
+
+    return Results.Json(new { ok, message, alreadyUnlocked = already });
+});
+
+app.MapGet("/api/premium/entitlement", async (HttpRequest req, PlaceRepository places, CustomerAccountRepository customers, IConfiguration config) =>
+{
+    if (!MobileKeyOk(req, config))
+        return Results.Unauthorized();
+
+    if (!int.TryParse(req.Query["placeId"], out var placeId) || placeId <= 0)
+        return Results.BadRequest(new { message = "Thiếu placeId." });
+    var deviceId = req.Query["deviceInstallId"].ToString();
+    if (string.IsNullOrWhiteSpace(deviceId))
+        return Results.BadRequest(new { message = "Thiếu deviceInstallId." });
+    int? customerUserId = null;
+    var cq = req.Query["customerUserId"].ToString();
+    if (int.TryParse(cq, out var cid) && cid > 0)
+        customerUserId = cid;
+
+    var place = await places.GetAsync(placeId);
+    if (place is null)
+        return Results.NotFound(new { message = "Không có POI." });
+    if (place.PremiumPriceDemo <= 0)
+        return Results.Json(new { unlocked = true });
+
+    var unlocked = await customers.HasPremiumUnlockForCurrentPriceAsync(
+        placeId,
+        place.PremiumPriceDemo,
+        deviceId.Trim(),
+        customerUserId);
+
+    return Results.Json(new { unlocked });
+});
+
 app.MapRazorPages();
 
 await using (var scope = app.Services.CreateAsyncScope())
@@ -259,4 +350,11 @@ internal sealed class RoutePointSyncItem
     public double Longitude { get; set; }
     public string? TimestampUtc { get; set; }
     public string? Source { get; set; }
+}
+
+internal sealed class PremiumPayDemoBody
+{
+    public int PlaceId { get; set; }
+    public string? DeviceInstallId { get; set; }
+    public int? CustomerUserId { get; set; }
 }

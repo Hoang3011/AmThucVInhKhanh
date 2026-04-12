@@ -8,6 +8,7 @@ public sealed class PlaceRepository
     private readonly string _dbPath;
     private string? _tableName;
     private bool? _hasMapUrl;
+    private bool _premiumColumnsReady;
 
     public PlaceRepository(IWebHostEnvironment env)
     {
@@ -57,11 +58,51 @@ public sealed class PlaceRepository
         _hasMapUrl ??= false;
     }
 
+    private static async Task<bool> ColumnExistsOnTableAsync(SqliteConnection connection, string tableName, string column)
+    {
+        await using var pragma = connection.CreateCommand();
+        pragma.CommandText = $"PRAGMA table_info({tableName})";
+        await using var r = await pragma.ExecuteReaderAsync();
+        while (await r.ReadAsync())
+        {
+            if (string.Equals(r.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private async Task EnsurePremiumColumnsAsync(SqliteConnection conn)
+    {
+        if (_premiumColumnsReady)
+            return;
+
+        await EnsureMetaAsync(conn);
+        var table = _tableName ?? "Place";
+
+        if (!await ColumnExistsOnTableAsync(conn, table, "PremiumPriceDemo"))
+        {
+            await using var a = conn.CreateCommand();
+            a.CommandText = $"ALTER TABLE {table} ADD COLUMN PremiumPriceDemo REAL NOT NULL DEFAULT 0";
+            await a.ExecuteNonQueryAsync();
+        }
+
+        if (!await ColumnExistsOnTableAsync(conn, table, "PremiumVietnameseAudioText"))
+        {
+            await using var a = conn.CreateCommand();
+            a.CommandText = $"ALTER TABLE {table} ADD COLUMN PremiumVietnameseAudioText TEXT NOT NULL DEFAULT ''";
+            await a.ExecuteNonQueryAsync();
+        }
+
+        _premiumColumnsReady = true;
+    }
+
     public async Task<List<PlaceRow>> ListAsync()
     {
         var list = new List<PlaceRow>();
         await using var conn = Open();
         await EnsureMetaAsync(conn);
+        await EnsurePremiumColumnsAsync(conn);
 
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = _hasMapUrl == true
@@ -69,7 +110,8 @@ public sealed class PlaceRepository
               SELECT Id, Name, Address, Specialty, ImageUrl,
                      Latitude, Longitude, ActivationRadiusMeters, Priority,
                      Description, VietnameseAudioText, EnglishAudioText,
-                     ChineseAudioText, JapaneseAudioText, MapUrl
+                     ChineseAudioText, JapaneseAudioText,
+                     PremiumPriceDemo, PremiumVietnameseAudioText, MapUrl
               FROM {_tableName}
               ORDER BY Priority DESC, Name
               """
@@ -77,7 +119,8 @@ public sealed class PlaceRepository
               SELECT Id, Name, Address, Specialty, ImageUrl,
                      Latitude, Longitude, ActivationRadiusMeters, Priority,
                      Description, VietnameseAudioText, EnglishAudioText,
-                     ChineseAudioText, JapaneseAudioText
+                     ChineseAudioText, JapaneseAudioText,
+                     PremiumPriceDemo, PremiumVietnameseAudioText
               FROM {_tableName}
               ORDER BY Priority DESC, Name
               """;
@@ -93,6 +136,7 @@ public sealed class PlaceRepository
     {
         await using var conn = Open();
         await EnsureMetaAsync(conn);
+        await EnsurePremiumColumnsAsync(conn);
 
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = _hasMapUrl == true
@@ -100,14 +144,16 @@ public sealed class PlaceRepository
               SELECT Id, Name, Address, Specialty, ImageUrl,
                      Latitude, Longitude, ActivationRadiusMeters, Priority,
                      Description, VietnameseAudioText, EnglishAudioText,
-                     ChineseAudioText, JapaneseAudioText, MapUrl
+                     ChineseAudioText, JapaneseAudioText,
+                     PremiumPriceDemo, PremiumVietnameseAudioText, MapUrl
               FROM {_tableName} WHERE Id = @id
               """
             : $"""
               SELECT Id, Name, Address, Specialty, ImageUrl,
                      Latitude, Longitude, ActivationRadiusMeters, Priority,
                      Description, VietnameseAudioText, EnglishAudioText,
-                     ChineseAudioText, JapaneseAudioText
+                     ChineseAudioText, JapaneseAudioText,
+                     PremiumPriceDemo, PremiumVietnameseAudioText
               FROM {_tableName} WHERE Id = @id
               """;
         cmd.Parameters.AddWithValue("@id", id);
@@ -121,6 +167,12 @@ public sealed class PlaceRepository
 
     private static PlaceRow ReadRow(SqliteDataReader reader, bool hasMapUrl)
     {
+        var premPrice = reader.GetDouble(14);
+        var premText = reader.IsDBNull(15) ? "" : reader.GetString(15);
+        var map = "";
+        if (hasMapUrl)
+            map = reader.IsDBNull(16) ? "" : reader.GetString(16);
+
         return new PlaceRow
         {
             Id = reader.GetInt32(0),
@@ -137,7 +189,9 @@ public sealed class PlaceRepository
             EnglishAudioText = reader.GetString(11),
             ChineseAudioText = reader.GetString(12),
             JapaneseAudioText = reader.GetString(13),
-            MapUrl = hasMapUrl && !reader.IsDBNull(14) ? reader.GetString(14) : ""
+            PremiumPriceDemo = premPrice,
+            PremiumVietnameseAudioText = premText,
+            MapUrl = map
         };
     }
 
@@ -145,6 +199,7 @@ public sealed class PlaceRepository
     {
         await using var conn = Open();
         await EnsureMetaAsync(conn);
+        await EnsurePremiumColumnsAsync(conn);
 
         await using var cmd = conn.CreateCommand();
         if (_hasMapUrl == true)
@@ -153,8 +208,9 @@ public sealed class PlaceRepository
                 INSERT INTO {_tableName}
                 (Name, Address, Specialty, ImageUrl, Latitude, Longitude,
                  ActivationRadiusMeters, Priority, Description,
-                 VietnameseAudioText, EnglishAudioText, ChineseAudioText, JapaneseAudioText, MapUrl)
-                VALUES (@n,@a,@s,@i,@lat,@lng,@rad,@pri,@d,@vi,@en,@zh,@ja,@map)
+                 VietnameseAudioText, EnglishAudioText, ChineseAudioText, JapaneseAudioText,
+                 PremiumPriceDemo, PremiumVietnameseAudioText, MapUrl)
+                VALUES (@n,@a,@s,@i,@lat,@lng,@rad,@pri,@d,@vi,@en,@zh,@ja,@prem,@premT,@map)
                 """;
             cmd.Parameters.AddWithValue("@map", p.MapUrl);
         }
@@ -164,8 +220,9 @@ public sealed class PlaceRepository
                 INSERT INTO {_tableName}
                 (Name, Address, Specialty, ImageUrl, Latitude, Longitude,
                  ActivationRadiusMeters, Priority, Description,
-                 VietnameseAudioText, EnglishAudioText, ChineseAudioText, JapaneseAudioText)
-                VALUES (@n,@a,@s,@i,@lat,@lng,@rad,@pri,@d,@vi,@en,@zh,@ja)
+                 VietnameseAudioText, EnglishAudioText, ChineseAudioText, JapaneseAudioText,
+                 PremiumPriceDemo, PremiumVietnameseAudioText)
+                VALUES (@n,@a,@s,@i,@lat,@lng,@rad,@pri,@d,@vi,@en,@zh,@ja,@prem,@premT)
                 """;
         }
 
@@ -182,6 +239,8 @@ public sealed class PlaceRepository
         cmd.Parameters.AddWithValue("@en", p.EnglishAudioText);
         cmd.Parameters.AddWithValue("@zh", p.ChineseAudioText);
         cmd.Parameters.AddWithValue("@ja", p.JapaneseAudioText);
+        cmd.Parameters.AddWithValue("@prem", p.PremiumPriceDemo);
+        cmd.Parameters.AddWithValue("@premT", p.PremiumVietnameseAudioText ?? "");
 
         await cmd.ExecuteNonQueryAsync();
 
@@ -195,6 +254,7 @@ public sealed class PlaceRepository
     {
         await using var conn = Open();
         await EnsureMetaAsync(conn);
+        await EnsurePremiumColumnsAsync(conn);
 
         await using var cmd = conn.CreateCommand();
         if (_hasMapUrl == true)
@@ -204,7 +264,8 @@ public sealed class PlaceRepository
                   Name=@n, Address=@a, Specialty=@s, ImageUrl=@i,
                   Latitude=@lat, Longitude=@lng, ActivationRadiusMeters=@rad, Priority=@pri,
                   Description=@d, VietnameseAudioText=@vi, EnglishAudioText=@en,
-                  ChineseAudioText=@zh, JapaneseAudioText=@ja, MapUrl=@map
+                  ChineseAudioText=@zh, JapaneseAudioText=@ja,
+                  PremiumPriceDemo=@prem, PremiumVietnameseAudioText=@premT, MapUrl=@map
                 WHERE Id=@id
                 """;
             cmd.Parameters.AddWithValue("@map", p.MapUrl);
@@ -216,7 +277,8 @@ public sealed class PlaceRepository
                   Name=@n, Address=@a, Specialty=@s, ImageUrl=@i,
                   Latitude=@lat, Longitude=@lng, ActivationRadiusMeters=@rad, Priority=@pri,
                   Description=@d, VietnameseAudioText=@vi, EnglishAudioText=@en,
-                  ChineseAudioText=@zh, JapaneseAudioText=@ja
+                  ChineseAudioText=@zh, JapaneseAudioText=@ja,
+                  PremiumPriceDemo=@prem, PremiumVietnameseAudioText=@premT
                 WHERE Id=@id
                 """;
         }
@@ -235,6 +297,8 @@ public sealed class PlaceRepository
         cmd.Parameters.AddWithValue("@en", p.EnglishAudioText);
         cmd.Parameters.AddWithValue("@zh", p.ChineseAudioText);
         cmd.Parameters.AddWithValue("@ja", p.JapaneseAudioText);
+        cmd.Parameters.AddWithValue("@prem", p.PremiumPriceDemo);
+        cmd.Parameters.AddWithValue("@premT", p.PremiumVietnameseAudioText ?? "");
 
         await cmd.ExecuteNonQueryAsync();
     }

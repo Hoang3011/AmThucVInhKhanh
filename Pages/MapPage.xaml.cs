@@ -86,6 +86,14 @@ public partial class MapPage : ContentPage
     private string _selectedLanguage = "vi";
     private int _isRefreshingPois;
 
+    /// <summary>OSRM: điểm nhắc rẽ / tên đường; null khi không có lộ trình chi tiết.</summary>
+    private List<OsrmRoutingService.NavCue>? _footNavCues;
+    private int _nextFootNavCueIndex;
+    private DateTime? _lastFootNavTtsUtc;
+    private const double FootNavCueTriggerMeters = 40;
+    private const double FootNavMinTtsGapSeconds = 9;
+    private const double FootNavSkipCueIfCloserThanMeters = 22;
+
     /// <summary>Ưu tiên POI từ API khi đã cấu hình <c>PoiApiUrl</c> (+ <c>PoiApiKey</c> cho Supabase); không thì đọc <c>VinhKhanh.db</c> cục bộ.</summary>
     private async Task<List<Place>> LoadPlacesAsync()
     {
@@ -241,6 +249,122 @@ public partial class MapPage : ContentPage
                 place.Description,
                 place.Name)
         };
+    }
+
+    /// <summary>TTS ngắn khi bấm Chỉ đường — không phát file thuyết minh dài của POI.</summary>
+    private static string BuildDirectionsTtsText(string? destinationDisplayName, string lang, bool osrmDetailedRoute = false)
+    {
+        var l = (lang ?? "vi").Trim().ToLowerInvariant();
+        var name = string.IsNullOrWhiteSpace(destinationDisplayName) ? null : destinationDisplayName.Trim();
+        if (osrmDetailedRoute)
+        {
+            return l switch
+            {
+                "en" => name is null
+                    ? "Walking directions to the bus stop. Follow the orange route on the map; at junctions you will hear turn prompts."
+                    : $"Walking directions to {name}. Follow the orange route on the map; at junctions you will hear turn prompts.",
+                "zh" => name is null
+                    ? "步行前往公交站。请沿地图上橙色路线行走，路口处会有转弯提示。"
+                    : $"步行前往「{name}」。请沿地图上橙色路线行走，路口处会有转弯提示。",
+                "ja" => name is null
+                    ? "バス停までの徒歩ルートです。地図のオレンジの線に沿ってください。交差点では曲がる方向を案内します。"
+                    : $"「{name}」までの徒歩ルートです。地図のオレンジの線に沿ってください。交差点では曲がる方向を案内します。",
+                _ => name is null
+                    ? "Đang chỉ đường đi bộ tới điểm dừng xe buýt. Hãy theo đường màu cam trên bản đồ; tới gần ngã rẽ ứng dụng sẽ báo hướng và tên đường."
+                    : $"Đang chỉ đường đi bộ tới {name}. Hãy theo đường màu cam trên bản đồ; tới gần ngã rẽ ứng dụng sẽ báo hướng và tên đường."
+            };
+        }
+
+        return l switch
+        {
+            "en" => name is null
+                ? "Directions to the bus stop. Follow the orange dashed line on the map."
+                : $"Directions to {name}. Follow the orange dashed line on the map.",
+            "zh" => name is null
+                ? "正在为您指引前往公交站。请沿地图上的橙色虚线前往。"
+                : $"正在为您指引前往「{name}」。请沿地图上的橙色虚线前往。",
+            "ja" => name is null
+                ? "バス停への道順です。地図上のオレンジ色の破線に沿ってください。"
+                : $"「{name}」への道順です。地図上のオレンジ色の破線に沿ってください。",
+            _ => name is null
+                ? "Đang chỉ đường tới điểm dừng xe buýt. Hãy theo đường màu cam nét đứt trên bản đồ."
+                : $"Đang chỉ đường tới {name}. Hãy theo đường màu cam nét đứt trên bản đồ."
+        };
+    }
+
+    void ClearFootNavTurnState()
+    {
+        _footNavCues = null;
+        _nextFootNavCueIndex = 0;
+        _lastFootNavTtsUtc = null;
+    }
+
+    void AdvanceFootNavPastNearbyCues()
+    {
+        if (_footNavCues is null)
+            return;
+        while (_nextFootNavCueIndex < _footNavCues.Count)
+        {
+            var c = _footNavCues[_nextFootNavCueIndex];
+            if (CalculateDistance(_simulatedLat, _simulatedLng, c.Lat, c.Lng) < FootNavSkipCueIfCloserThanMeters)
+                _nextFootNavCueIndex++;
+            else
+                break;
+        }
+    }
+
+    /// <summary>Thử vẽ lộ trình OSRM; nếu thất bại thì nét thẳng như cũ. Item1 = đã vẽ polyline OSRM; Item2 = có bước rẽ TTS.</summary>
+    async Task<(bool usedOsrmPolyline, bool hasTurnCues)> TryApplyOsrmFootRouteOnMapAsync(double destLat, double destLng, string? destName)
+    {
+        ClearFootNavTurnState();
+        var route = await OsrmRoutingService.TryGetFootRouteAsync(_simulatedLat, _simulatedLng, destLat, destLng, destName);
+        if (route is null)
+        {
+            var d1 = destLat.ToString(CultureInfo.InvariantCulture);
+            var d2 = destLng.ToString(CultureInfo.InvariantCulture);
+            await mapView.EvaluateJavaScriptAsync($"window.showNavigationGuideTo && window.showNavigationGuideTo({d1},{d2});");
+            return (false, false);
+        }
+
+        var b64 = OsrmRoutingService.PolylineToJsonBase64(route.Polyline);
+        await mapView.EvaluateJavaScriptAsync(
+            $"window.showNavigationPolylineFromBase64 && window.showNavigationPolylineFromBase64('{b64}');");
+
+        var hasCues = route.Cues.Count > 0;
+        _footNavCues = hasCues ? [.. route.Cues] : null;
+        _nextFootNavCueIndex = 0;
+        AdvanceFootNavPastNearbyCues();
+        return (true, hasCues);
+    }
+
+    async Task MaybeAnnounceFootNavCueAsync()
+    {
+        if (_footNavCues is null || _nextFootNavCueIndex >= _footNavCues.Count)
+            return;
+
+        var now = DateTime.UtcNow;
+        if (_lastFootNavTtsUtc is DateTime t && (now - t).TotalSeconds < FootNavMinTtsGapSeconds)
+            return;
+
+        var cue = _footNavCues[_nextFootNavCueIndex];
+        if (CalculateDistance(_simulatedLat, _simulatedLng, cue.Lat, cue.Lng) > FootNavCueTriggerMeters)
+            return;
+
+        var lang = string.IsNullOrWhiteSpace(_selectedLanguage) ? "vi" : _selectedLanguage;
+        var text = OsrmRoutingService.PickCueText(cue, lang);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            _nextFootNavCueIndex++;
+            return;
+        }
+
+        CancelProximitySpeech();
+        CancelBusStopSpeech();
+        var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(-1, lang, text);
+        UpdateLastPlayedLabel("Chỉ đường (rẽ)", "Chỉ đường");
+        await HistoryLogService.AddAsync("Chỉ đường (rẽ)", "Chỉ đường", lang, durationSeconds);
+        _nextFootNavCueIndex++;
+        _lastFootNavTtsUtc = now;
     }
 
     private async Task<List<Place>> LoadPlacesFromLocalDatabaseAsync()
@@ -401,7 +525,8 @@ public partial class MapPage : ContentPage
                 viText = p.VietnameseAudioText,
                 enText = p.EnglishAudioText,
                 zhText = p.ChineseAudioText,
-                jaText = p.JapaneseAudioText
+                jaText = p.JapaneseAudioText,
+                premiumPrice = p.PremiumPriceDemo
             });
         }
 
@@ -653,6 +778,30 @@ public partial class MapPage : ContentPage
           return true;
         }};
 
+        window.showNavigationPolylineFromBase64 = function(b64) {{
+          try {{
+            if (typeof b64 !== 'string' || !b64 || !map) return false;
+            var json = atob(b64);
+            var latlngs = JSON.parse(json);
+            if (!Array.isArray(latlngs) || latlngs.length < 2) return false;
+            for (var j = 0; j < latlngs.length; j++) {{
+              var p = latlngs[j];
+              if (!p || typeof p[0] !== 'number' || typeof p[1] !== 'number') return false;
+            }}
+            if (window.clearNavigationGuide) window.clearNavigationGuide();
+            navGuidePolyline = L.polyline(latlngs, {{
+              color: '#FF6D00',
+              weight: 5,
+              opacity: 0.92
+            }}).addTo(map);
+            try {{
+              map.fitBounds(navGuidePolyline.getBounds(), {{ padding: [50, 50], maxZoom: 17 }});
+            }} catch (err2) {{}}
+            if (typeof setDbg === 'function') setDbg('Chỉ đường OSRM: ' + latlngs.length + ' điểm');
+            return true;
+          }} catch (err) {{ return false; }}
+        }};
+
         // Tránh tile.openstreetmap.org vì WebView mobile thường không gửi Referer => bị chặn.
         var tileProviders = [
           {{
@@ -853,6 +1002,13 @@ for (var i = 0; i < pois.length; i++) {{
               photoSrc = 'file:///android_asset/' + esc(imgFile);
           }}
           var mapHref = (p.mapUrl && String(p.mapUrl).length > 0) ? String(p.mapUrl) : ('https://www.google.com/maps?q=' + p.lat + ',' + p.lng);
+          var payLine = '';
+          if (typeof p.premiumPrice === 'number' && p.premiumPrice > 0) {{
+            payLine = '<div class=""poi-desc""><span class=""poi-label"">Trả phí</span>Thuyết minh (demo): <b>'
+              + String(Math.round(p.premiumPrice))
+              + ' đ</b>. Nghe trong app sẽ hỏi trả phí; hoặc bấm dưới để trả bằng Zalo/trình duyệt.</div>'
+              + '<div class=""poi-desc""><a class=""poi-btn secondary"" href=""app://open-listen-pay?id=' + p.id + '"">Trả phí (Zalo / trình duyệt)</a></div>';
+          }}
           
           var popupHtml = 
               `<div class='poi-popup'>`
@@ -865,6 +1021,7 @@ for (var i = 0; i < pois.length; i++) {{
               + `<div class='poi-desc'><span class='poi-label'>EN</span>${{esc(enText)}}</div>`
               + `<div class='poi-desc'><span class='poi-label'>ZH</span>${{esc(zhText)}}</div>`
               + `<div class='poi-desc'><span class='poi-label'>JA</span>${{esc(jaText)}}</div>`
+              + payLine
               + `<div class='poi-actions'>`
               + `<a class='poi-btn' href='app://directions?id=${{p.id}}' style='background:#0D47A1;color:#fff'>🧭 Chỉ đường</a>`
               + `<a class='poi-btn' href='app://speak-vi?id=${{p.id}}'>Nghe VN</a>`
@@ -956,6 +1113,7 @@ for (var i = 0; i < pois.length; i++) {{
         try
         {
             await RouteTrackService.ClearAsync();
+            ClearFootNavTurnState();
             await mapView.EvaluateJavaScriptAsync("(window.clearNavigationGuide&&window.clearNavigationGuide());(window.clearRoutePath&&window.clearRoutePath());");
             await DisplayAlertAsync("Đã xóa tuyến", "Đã xóa toàn bộ dữ liệu tuyến di chuyển.", "OK");
         }
@@ -1252,6 +1410,9 @@ for (var i = 0; i < pois.length; i++) {{
         };
         if (string.IsNullOrWhiteSpace(text)) return;
 
+        if (!await EnsurePoiListenPaidAsync(place))
+            return;
+
         CancelProximitySpeech();
         CancelBusStopSpeech();
         _busStopTtsCts?.Dispose();
@@ -1382,7 +1543,11 @@ for (var i = 0; i < pois.length; i++) {{
                 await mapView.EvaluateJavaScriptAsync(js);
                 await TrackRoutePointAsync("jump");
                 if (runProximityCheck)
+                {
                     await CheckProximityAndSpeakAsync();
+                    await MaybeAnnounceFootNavCueAsync();
+                }
+
                 return;
             }
             catch
@@ -1397,7 +1562,9 @@ for (var i = 0; i < pois.length; i++) {{
         if (poiIndex < 0 || poiIndex >= _pois.Count) return;
 
         var place = _pois[poiIndex];
-        var payload = $"app://poi?id={place.Id}";
+        var payload = PlaceApiService.GetListenPayUrlForPlace(place.Id);
+        if (string.IsNullOrWhiteSpace(payload))
+            payload = $"app://poi?id={place.Id}";
 
         lblQrNearbyTitle.Text = place.Name;
         lblNearbyPayload.Text = payload;
@@ -1443,7 +1610,9 @@ for (var i = 0; i < pois.length; i++) {{
 
         var idx = pickerPoiForQr.SelectedIndex;
         var place = _pois[idx];
-        var payload = $"app://poi?id={place.Id}";
+        var payload = PlaceApiService.GetListenPayUrlForPlace(place.Id);
+        if (string.IsNullOrWhiteSpace(payload))
+            payload = $"app://poi?id={place.Id}";
 
         try
         {
@@ -1486,6 +1655,9 @@ for (var i = 0; i < pois.length; i++) {{
         }
 
         var place = _pois[poiIndex];
+        if (!await EnsurePoiListenPaidAsync(place))
+            return;
+
         var text = PickNarrationText(place, _selectedLanguage);
 
         if (!string.IsNullOrWhiteSpace(text))
@@ -1518,6 +1690,16 @@ for (var i = 0; i < pois.length; i++) {{
         if (string.IsNullOrWhiteSpace(rawValue)) return false;
 
         var value = rawValue.Trim();
+        if (value.Contains("Listen/Pay", StringComparison.OrdinalIgnoreCase))
+        {
+            var lm = Regex.Match(value, @"[?&]placeId=(\d+)", RegexOptions.IgnoreCase);
+            if (lm.Success && int.TryParse(lm.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var listenPid))
+            {
+                poiId = listenPid;
+                return true;
+            }
+        }
+
         var normalized = NormalizeQrToken(value);
 
         // ===== Mục 8 trong yêu cầu: QR tại điểm dừng xe buýt, không cần GPS =====
@@ -1687,6 +1869,7 @@ for (var i = 0; i < pois.length; i++) {{
         PauseGpsForManualDemo();
         await TrackRoutePointAsync("arrow");
         await CheckProximityAndSpeakAsync();
+        await MaybeAnnounceFootNavCueAsync();
     }
 
     void PauseGpsForManualDemo()
@@ -1907,6 +2090,9 @@ for (var i = 0; i < pois.length; i++) {{
         }
 
         if (string.IsNullOrWhiteSpace(textToSpeak) || speakCts is null || speakPlace is null)
+            return;
+
+        if (!await EnsurePoiListenPaidAsync(speakPlace))
             return;
 
         var token = speakCts.Token;
@@ -2147,6 +2333,7 @@ for (var i = 0; i < pois.length; i++) {{
             await SyncUserMarkerPositionOnMapAsync(panToMarker: false);
             await TrackRoutePointAsync("gps");
             await CheckProximityAndSpeakAsync();
+            await MaybeAnnounceFootNavCueAsync();
         });
     }
 
@@ -2413,8 +2600,75 @@ for (var i = 0; i < pois.length; i++) {{
         }
     }
 
+    async Task<bool> EnsurePoiListenPaidAsync(Place place)
+    {
+        if (place.PremiumPriceDemo <= 0)
+            return true;
+
+        if (await PremiumPaymentService.CheckEntitlementAsync(place.Id))
+            return true;
+
+        var priceText = place.PremiumPriceDemo.ToString("N0", CultureInfo.GetCultureInfo("vi-VN"));
+        var pay = await DisplayAlertAsync(
+            "Trả phí thuyết minh (demo)",
+            $"«{place.Name}»: {priceText} đ — mô phỏng thanh toán (gắn thiết bị; nếu đã đăng nhập tài khoản khách thì đồng bộ với web).",
+            "Trả phí",
+            "Hủy");
+        if (!pay)
+            return false;
+
+        var (ok, msg, _) = await PremiumPaymentService.PayDemoAsync(place.Id);
+        if (!ok)
+        {
+            await DisplayAlertAsync("Không thành công", msg, "OK");
+            return false;
+        }
+
+        return await PremiumPaymentService.CheckEntitlementAsync(place.Id);
+    }
+
     async void MapView_Navigating(object sender, WebNavigatingEventArgs e)
     {
+        if (e.Url.StartsWith("app://open-listen-pay", StringComparison.OrdinalIgnoreCase))
+        {
+            e.Cancel = true;
+            try
+            {
+                var m = Regex.Match(e.Url, @"[?&]id=(\d+)", RegexOptions.IgnoreCase);
+                if (m.Success
+                    && int.TryParse(m.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid))
+                {
+                    var openUrl = PlaceApiService.GetListenPayUrlForPlace(pid);
+                    if (!string.IsNullOrWhiteSpace(openUrl))
+                        await Launcher.Default.OpenAsync(new Uri(openUrl));
+                }
+            }
+            catch
+            {
+                // Bỏ qua.
+            }
+
+            return;
+        }
+
+        if (e.Url.Contains("/Listen/Pay", StringComparison.OrdinalIgnoreCase)
+            && (e.Url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                || e.Url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
+        {
+            e.Cancel = true;
+            try
+            {
+                if (Uri.TryCreate(e.Url, UriKind.Absolute, out var u))
+                    await Launcher.Default.OpenAsync(u);
+            }
+            catch
+            {
+                // Bỏ qua.
+            }
+
+            return;
+        }
+
         if (e.Url.StartsWith("app://map", StringComparison.OrdinalIgnoreCase))
         {
             e.Cancel = true;
@@ -2450,6 +2704,7 @@ for (var i = 0; i < pois.length; i++) {{
             {
                 double? destLat = null;
                 double? destLng = null;
+                string? directionsDestinationName = null;
 
                 var idMatch = Regex.Match(e.Url, @"[?&]id=(\d+)", RegexOptions.IgnoreCase);
                 if (idMatch.Success
@@ -2460,6 +2715,7 @@ for (var i = 0; i < pois.length; i++) {{
                     var p = _pois[idx];
                     destLat = p.Latitude;
                     destLng = p.Longitude;
+                    directionsDestinationName = string.IsNullOrWhiteSpace(p.Name) ? $"POI #{p.Id}" : p.Name;
                 }
                 else
                 {
@@ -2477,9 +2733,17 @@ for (var i = 0; i < pois.length; i++) {{
                 if (destLat is null || destLng is null)
                     return;
 
-                var d1 = destLat.Value.ToString(CultureInfo.InvariantCulture);
-                var d2 = destLng.Value.ToString(CultureInfo.InvariantCulture);
-                await mapView.EvaluateJavaScriptAsync($"window.showNavigationGuideTo && window.showNavigationGuideTo({d1},{d2});");
+                var (usedOsrmPolyline, _) = await TryApplyOsrmFootRouteOnMapAsync(destLat.Value, destLng.Value, directionsDestinationName);
+
+                var lang = string.IsNullOrWhiteSpace(_selectedLanguage) ? "vi" : _selectedLanguage;
+                var tts = BuildDirectionsTtsText(directionsDestinationName, lang, usedOsrmPolyline);
+                var label = directionsDestinationName ?? "Điểm dừng xe buýt";
+
+                CancelProximitySpeech();
+                CancelBusStopSpeech();
+                var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(-1, lang, tts);
+                UpdateLastPlayedLabel(label, "Chỉ đường");
+                await HistoryLogService.AddAsync(label, "Chỉ đường", lang, durationSeconds);
             }
             catch
             {
@@ -2522,6 +2786,9 @@ for (var i = 0; i < pois.length; i++) {{
                 return;
 
             var place = _pois[poiIndex];
+            if (!await EnsurePoiListenPaidAsync(place))
+                return;
+
             var text = PickNarrationText(place, speakLang);
 
             CancelProximitySpeech();

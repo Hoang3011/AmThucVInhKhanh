@@ -1,0 +1,56 @@
+@page
+@model TourGuideCMS.Pages.Revenue.IndexModel
+@{
+    ViewData["Title"] = "Doanh thu trả phí demo";
+}
+
+<h1>Doanh thu thuyết minh nâng cao (demo)</h1>
+<p class="text-muted small">Tổng hợp từ bảng thanh toán demo theo thiết bị — không phải cổng thanh toán thật.</p>
+
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card border-primary">
+            <div class="card-body">
+                <div class="text-muted small">Tổng tiền toàn hệ thống</div>
+                <div class="fs-3 fw-bold text-primary">@Model.GrandTotalVnd.ToString("N0") đ</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <div class="text-muted small">Số giao dịch ghi nhận</div>
+                <div class="fs-3 fw-bold">@Model.TotalPaymentRows</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<h2 class="h5">Theo từng POI</h2>
+<div class="table-responsive">
+    <table class="table table-sm table-bordered">
+        <thead class="table-light">
+            <tr>
+                <th>Id</th>
+                <th>Tên POI</th>
+                <th class="text-end">Tổng tiền (đ)</th>
+                <th class="text-end">Số lượt trả</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var line in Model.Lines)
+        {
+            <tr>
+                <td>@line.PlaceId</td>
+                <td>@line.PlaceName</td>
+                <td class="text-end">@line.TotalVnd.ToString("N0")</td>
+                <td class="text-end">@line.PaymentCount</td>
+            </tr>
+        }
+        @if (Model.Lines.Count == 0)
+        {
+            <tr><td colspan="4" class="text-muted">Chưa có giao dịch demo.</td></tr>
+        }
+        </tbody>
+    </table>
+</div>

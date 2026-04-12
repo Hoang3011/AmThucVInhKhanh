@@ -33,49 +33,73 @@ public sealed class CustomerAccountRepository
 
     private async Task EnsureSchemaAsync(SqliteConnection connection)
     {
-        if (_schemaReady) return;
-
-        await using var cmd = connection.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS CustomerUser (
-                Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                FullName TEXT NOT NULL,
-                PhoneOrEmail TEXT NOT NULL UNIQUE,
-                PasswordHash TEXT NOT NULL,
-                PasswordSalt TEXT NOT NULL,
-                PasswordPlain TEXT,
-                CreatedAtUtc TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS NarrationPlay (
-                Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                CustomerUserId INTEGER,
-                PlaceName TEXT NOT NULL,
-                Source TEXT NOT NULL,
-                Language TEXT,
-                DurationSeconds REAL,
-                PlayedAtUtc TEXT NOT NULL,
-                FOREIGN KEY (CustomerUserId) REFERENCES CustomerUser(Id)
-            );
-            CREATE INDEX IF NOT EXISTS IX_NarrationPlay_Place ON NarrationPlay(PlaceName);
-            CREATE INDEX IF NOT EXISTS IX_NarrationPlay_Source ON NarrationPlay(Source);
-            CREATE INDEX IF NOT EXISTS IX_NarrationPlay_PlayedAt ON NarrationPlay(PlayedAtUtc);
-            CREATE TABLE IF NOT EXISTS CustomerRouteSnapshot (
-                CustomerUserId INTEGER PRIMARY KEY,
-                PointsJson TEXT NOT NULL,
-                UpdatedAtUtc TEXT NOT NULL,
-                FOREIGN KEY (CustomerUserId) REFERENCES CustomerUser(Id)
-            );
-            """;
-        await cmd.ExecuteNonQueryAsync();
-
-        // Migration cho DB cũ: bổ sung cột mật khẩu hiển thị trên CMS.
-        if (!await ColumnExistsAsync(connection, "CustomerUser", "PasswordPlain"))
+        if (!_schemaReady)
         {
-            await using var alter = connection.CreateCommand();
-            alter.CommandText = "ALTER TABLE CustomerUser ADD COLUMN PasswordPlain TEXT";
-            await alter.ExecuteNonQueryAsync();
+            await using var cmd = connection.CreateCommand();
+            cmd.CommandText = """
+                CREATE TABLE IF NOT EXISTS CustomerUser (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    FullName TEXT NOT NULL,
+                    PhoneOrEmail TEXT NOT NULL UNIQUE,
+                    PasswordHash TEXT NOT NULL,
+                    PasswordSalt TEXT NOT NULL,
+                    PasswordPlain TEXT,
+                    CreatedAtUtc TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS NarrationPlay (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    CustomerUserId INTEGER,
+                    PlaceName TEXT NOT NULL,
+                    Source TEXT NOT NULL,
+                    Language TEXT,
+                    DurationSeconds REAL,
+                    PlayedAtUtc TEXT NOT NULL,
+                    FOREIGN KEY (CustomerUserId) REFERENCES CustomerUser(Id)
+                );
+                CREATE INDEX IF NOT EXISTS IX_NarrationPlay_Place ON NarrationPlay(PlaceName);
+                CREATE INDEX IF NOT EXISTS IX_NarrationPlay_Source ON NarrationPlay(Source);
+                CREATE INDEX IF NOT EXISTS IX_NarrationPlay_PlayedAt ON NarrationPlay(PlayedAtUtc);
+                CREATE TABLE IF NOT EXISTS CustomerRouteSnapshot (
+                    CustomerUserId INTEGER PRIMARY KEY,
+                    PointsJson TEXT NOT NULL,
+                    UpdatedAtUtc TEXT NOT NULL,
+                    FOREIGN KEY (CustomerUserId) REFERENCES CustomerUser(Id)
+                );
+                """;
+            await cmd.ExecuteNonQueryAsync();
+
+            // Migration cho DB cũ: bổ sung cột mật khẩu hiển thị trên CMS.
+            if (!await ColumnExistsAsync(connection, "CustomerUser", "PasswordPlain"))
+            {
+                await using var alter = connection.CreateCommand();
+                alter.CommandText = "ALTER TABLE CustomerUser ADD COLUMN PasswordPlain TEXT";
+                await alter.ExecuteNonQueryAsync();
+            }
+
+            _schemaReady = true;
         }
-        _schemaReady = true;
+
+        await EnsurePoiPremiumPaymentSchemaAsync(connection);
+    }
+
+    /// <summary>DB cũ có thể chưa có bảng thanh toán — luôn gọi idempotent.</summary>
+    private static async Task EnsurePoiPremiumPaymentSchemaAsync(SqliteConnection connection)
+    {
+        await using var prem = connection.CreateCommand();
+        prem.CommandText = """
+            CREATE TABLE IF NOT EXISTS PoiPremiumPayment (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                PlaceId INTEGER NOT NULL,
+                DeviceInstallId TEXT NOT NULL,
+                AmountVnd REAL NOT NULL,
+                CustomerUserId INTEGER,
+                PaidAtUtc TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS IX_PoiPremiumPayment_Place ON PoiPremiumPayment(PlaceId);
+            CREATE INDEX IF NOT EXISTS IX_PoiPremiumPayment_Device ON PoiPremiumPayment(DeviceInstallId);
+            CREATE INDEX IF NOT EXISTS IX_PoiPremiumPayment_Customer ON PoiPremiumPayment(CustomerUserId);
+            """;
+        await prem.ExecuteNonQueryAsync();
     }
 
     public async Task EnsureSchemaAsync()
@@ -474,6 +498,161 @@ public sealed class CustomerAccountRepository
         return list;
     }
 
+    public async Task<double> GetPremiumPaidSumAsync(int placeId, string deviceInstallId, int? customerUserId)
+    {
+        if (placeId <= 0)
+            return 0;
+
+        deviceInstallId = (deviceInstallId ?? string.Empty).Trim();
+
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        await using var cmd = connection.CreateCommand();
+        if (customerUserId.HasValue && customerUserId.Value > 0)
+        {
+            cmd.CommandText = """
+                SELECT IFNULL(SUM(AmountVnd), 0) FROM PoiPremiumPayment
+                WHERE PlaceId = @p
+                  AND (DeviceInstallId = @d OR CustomerUserId = @c)
+                """;
+            cmd.Parameters.AddWithValue("@c", customerUserId.Value);
+        }
+        else
+        {
+            cmd.CommandText = """
+                SELECT IFNULL(SUM(AmountVnd), 0) FROM PoiPremiumPayment
+                WHERE PlaceId = @p AND DeviceInstallId = @d
+                """;
+        }
+
+        cmd.Parameters.AddWithValue("@p", placeId);
+        cmd.Parameters.AddWithValue("@d", deviceInstallId);
+        var o = await cmd.ExecuteScalarAsync();
+        return o is null or DBNull ? 0 : Convert.ToDouble(o);
+    }
+
+    public async Task<bool> HasPremiumUnlockForCurrentPriceAsync(
+        int placeId,
+        double requiredVnd,
+        string deviceInstallId,
+        int? customerUserId)
+    {
+        if (placeId <= 0 || requiredVnd <= 0)
+            return true;
+
+        var sum = await GetPremiumPaidSumAsync(placeId, deviceInstallId, customerUserId);
+        return sum + 0.0001 >= requiredVnd;
+    }
+
+    /// <summary>Ghi nhận thanh toán demo; nếu admin tăng giá, chỉ thu phần còn thiếu so với tổng đã trả.</summary>
+    public async Task<(bool Ok, string Message, bool WasAlreadyUnlocked)> RecordPremiumPaymentDemoAsync(
+        int placeId,
+        string deviceInstallId,
+        double requiredAmountVnd,
+        int? customerUserId)
+    {
+        deviceInstallId = (deviceInstallId ?? string.Empty).Trim();
+        if (placeId <= 0 || string.IsNullOrWhiteSpace(deviceInstallId))
+            return (false, "Thiếu PlaceId hoặc mã thiết bị.", false);
+        if (requiredAmountVnd <= 0)
+            return (false, "POI không bật trả phí.", false);
+
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        int? uid = customerUserId;
+        if (uid.HasValue)
+        {
+            await using var ck = connection.CreateCommand();
+            ck.CommandText = "SELECT COUNT(1) FROM CustomerUser WHERE Id = @id";
+            ck.Parameters.AddWithValue("@id", uid.Value);
+            var exists = Convert.ToInt32(await ck.ExecuteScalarAsync()) > 0;
+            if (!exists)
+                uid = null;
+        }
+
+        var sum = await GetPremiumPaidSumAsync(placeId, deviceInstallId, uid);
+        if (sum + 0.0001 >= requiredAmountVnd)
+            return (true, "Đã mở khóa thuyết minh cho mức giá hiện tại.", true);
+
+        var delta = requiredAmountVnd - sum;
+        if (delta <= 0)
+            return (true, "Đã mở khóa.", true);
+
+        await using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = """
+                INSERT INTO PoiPremiumPayment (PlaceId, DeviceInstallId, AmountVnd, CustomerUserId, PaidAtUtc)
+                VALUES (@p, @d, @a, @u, @t)
+                """;
+            cmd.Parameters.AddWithValue("@p", placeId);
+            cmd.Parameters.AddWithValue("@d", deviceInstallId);
+            cmd.Parameters.AddWithValue("@a", delta);
+            cmd.Parameters.AddWithValue("@u", uid.HasValue ? uid.Value : DBNull.Value);
+            cmd.Parameters.AddWithValue("@t", DateTime.UtcNow.ToString("O"));
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        return (true, "Đã ghi nhận thanh toán demo.", false);
+    }
+
+    public async Task<(double GrandTotalVnd, int TotalPayments)> GetPremiumGrandTotalsAsync()
+    {
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT IFNULL(SUM(AmountVnd), 0), COUNT(1) FROM PoiPremiumPayment
+            """;
+        await using var r = await cmd.ExecuteReaderAsync();
+        if (!await r.ReadAsync())
+            return (0, 0);
+        return (r.GetDouble(0), r.GetInt32(1));
+    }
+
+    public async Task<IReadOnlyList<PremiumRevenueByPlaceRow>> GetPremiumRevenueByPlaceAsync()
+    {
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        var list = new List<PremiumRevenueByPlaceRow>();
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT PlaceId, SUM(AmountVnd) AS Total, COUNT(*) AS Cnt
+            FROM PoiPremiumPayment
+            GROUP BY PlaceId
+            ORDER BY Total DESC
+            """;
+        await using var r = await cmd.ExecuteReaderAsync();
+        while (await r.ReadAsync())
+        {
+            list.Add(new PremiumRevenueByPlaceRow(r.GetInt32(0), r.GetDouble(1), r.GetInt32(2)));
+        }
+
+        return list;
+    }
+
+    public async Task<(double TotalVnd, int PaymentCount)> GetPremiumRevenueForPlaceAsync(int placeId)
+    {
+        if (placeId <= 0)
+            return (0, 0);
+
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT IFNULL(SUM(AmountVnd), 0), COUNT(1) FROM PoiPremiumPayment WHERE PlaceId = @p
+            """;
+        cmd.Parameters.AddWithValue("@p", placeId);
+        await using var r = await cmd.ExecuteReaderAsync();
+        if (!await r.ReadAsync())
+            return (0, 0);
+        return (r.GetDouble(0), r.GetInt32(1));
+    }
+
     private static string GenerateSalt()
     {
         var bytes = RandomNumberGenerator.GetBytes(16);
@@ -515,3 +694,5 @@ public sealed record NarrationPlayRow(
     string? CustomerAccount);
 
 public sealed record PlayAggregateRow(string PlaceName, string Source, int Count);
+
+public sealed record PremiumRevenueByPlaceRow(int PlaceId, double TotalVnd, int PaymentCount);

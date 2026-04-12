@@ -40,6 +40,21 @@
                    TextColor="#263238"
                    PlaceholderColor="#90A4AE" />
 
+            <Label Text="Gốc CMS cho QR / Zalo (tùy chọn)"
+                   FontSize="14"
+                   FontAttributes="Bold"
+                   TextColor="{StaticResource Primary}" />
+            <Label Text="Khi URL API là localhost/10.0.2.2, điền gốc LAN mà điện thoại khác mở được (vd. http://192.168.1.5:5095). Để trống thì app thử suy từ URL đóng gói / đã lưu."
+                   FontSize="12"
+                   TextColor="#546E7A" />
+            <Entry x:Name="listenPayPublicBaseEntry"
+                   Placeholder="http://192.168.x.x:5095"
+                   Keyboard="Url"
+                   BackgroundColor="#F5F7FA"
+                   HeightRequest="44"
+                   TextColor="#263238"
+                   PlaceholderColor="#90A4AE" />
+
             <HorizontalStackLayout Spacing="10">
                 <Button Text="Lưu"
                         Clicked="OnSaveClicked"
@@ -63,6 +78,10 @@
             </HorizontalStackLayout>
 
             <Label x:Name="effectiveUrlLabel"
+                   FontSize="12"
+                   TextColor="#455A64" />
+
+            <Label x:Name="effectiveListenPayLabel"
                    FontSize="12"
                    TextColor="#455A64" />
 

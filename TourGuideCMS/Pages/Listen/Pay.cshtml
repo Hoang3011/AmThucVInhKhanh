@@ -1,0 +1,63 @@
+@page "/Listen/Pay"
+@model TourGuideCMS.Pages.Listen.PayModel
+@{
+    ViewData["Title"] = "Trả phí thuyết minh (demo)";
+}
+<div class="container py-4" style="max-width:540px">
+    <h4 class="mb-3">@Model.PlaceName</h4>
+
+    @if (Model.PlaceId <= 0)
+    {
+        <p class="text-danger">@Model.ResultMessage</p>
+    }
+    else if (Model.PriceVnd <= 0)
+    {
+        <p class="text-muted">Địa điểm này <strong>miễn phí</strong> thuyết minh trên app.</p>
+    }
+    else
+    {
+        <p>Giá hiện tại (demo): <strong>@Model.PriceVnd.ToString("N0") đ</strong></p>
+        <p class="small text-muted mb-3">
+            Trình duyệt (Zalo, Chrome…) được gắn một mã ngẫu nhiên lưu cục bộ.
+            Nếu bạn <strong>đăng nhập cùng tài khoản khách</strong> như trên app, sau khi trả phí ở đây bạn có thể nghe trực tiếp trong app mà không cần trả lại.
+        </p>
+
+        @if (!string.IsNullOrEmpty(Model.ResultMessage))
+        {
+            <div class="alert @(Model.ResultOk ? "alert-success" : "alert-warning")">@Model.ResultMessage</div>
+        }
+
+        <form method="post">
+            @Html.AntiForgeryToken()
+            <input type="hidden" asp-for="PlaceId" />
+            <input type="hidden" asp-for="WebDeviceId" id="webDeviceId" />
+
+            <div class="mb-2">
+                <label class="form-label">Tài khoản khách (tuỳ chọn)</label>
+                <input class="form-control" asp-for="CustomerPhone" placeholder="SĐT hoặc email đã đăng ký trên app" autocomplete="username" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Mật khẩu (tuỳ chọn)</label>
+                <input type="password" class="form-control" asp-for="CustomerPassword" autocomplete="current-password" />
+            </div>
+
+            <button type="submit" class="btn btn-primary">Xác nhận trả phí (demo)</button>
+        </form>
+    }
+</div>
+
+@if (Model.PlaceId > 0 && Model.PriceVnd > 0)
+{
+    <script>
+        (function () {
+            var k = 'vk_web_listen_did';
+            var v = localStorage.getItem(k);
+            if (!v) {
+                try { v = crypto.randomUUID(); } catch (e) { v = 'w' + Math.random().toString(36).slice(2) + Date.now(); }
+                localStorage.setItem(k, v);
+            }
+            var el = document.getElementById('webDeviceId');
+            if (el) el.value = v;
+        })();
+    </script>
+}

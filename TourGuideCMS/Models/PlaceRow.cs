@@ -17,4 +17,7 @@ public sealed class PlaceRow
     public string ChineseAudioText { get; set; } = "";
     public string JapaneseAudioText { get; set; } = "";
     public string MapUrl { get; set; } = "";
+    /// <summary>0 = không bật trả phí demo; &gt;0 = giá VNĐ demo để mở thuyết minh nâng cao trên app.</summary>
+    public double PremiumPriceDemo { get; set; }
+    public string PremiumVietnameseAudioText { get; set; } = "";
 }
