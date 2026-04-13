@@ -653,6 +653,41 @@ public sealed class CustomerAccountRepository
         return (r.GetDouble(0), r.GetInt32(1));
     }
 
+    public async Task<IReadOnlyList<PremiumRevenuePayerRow>> GetPremiumPayersByPlaceAsync()
+    {
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        var list = new List<PremiumRevenuePayerRow>();
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT p.PlaceId,
+                   p.CustomerUserId,
+                   u.FullName,
+                   u.PhoneOrEmail,
+                   p.DeviceInstallId,
+                   p.AmountVnd,
+                   p.PaidAtUtc
+            FROM PoiPremiumPayment p
+            LEFT JOIN CustomerUser u ON u.Id = p.CustomerUserId
+            ORDER BY p.PaidAtUtc DESC
+            """;
+        await using var r = await cmd.ExecuteReaderAsync();
+        while (await r.ReadAsync())
+        {
+            list.Add(new PremiumRevenuePayerRow(
+                r.GetInt32(0),
+                r.IsDBNull(1) ? null : r.GetInt32(1),
+                r.IsDBNull(2) ? null : r.GetString(2),
+                r.IsDBNull(3) ? null : r.GetString(3),
+                r.IsDBNull(4) ? "" : r.GetString(4),
+                r.GetDouble(5),
+                DateTime.TryParse(r.GetString(6), out var paidAt) ? paidAt : DateTime.MinValue));
+        }
+
+        return list;
+    }
+
     private static string GenerateSalt()
     {
         var bytes = RandomNumberGenerator.GetBytes(16);
@@ -696,3 +731,12 @@ public sealed record NarrationPlayRow(
 public sealed record PlayAggregateRow(string PlaceName, string Source, int Count);
 
 public sealed record PremiumRevenueByPlaceRow(int PlaceId, double TotalVnd, int PaymentCount);
+
+public sealed record PremiumRevenuePayerRow(
+    int PlaceId,
+    int? CustomerUserId,
+    string? CustomerFullName,
+    string? CustomerPhoneOrEmail,
+    string DeviceInstallId,
+    double AmountVnd,
+    DateTime PaidAtUtc);

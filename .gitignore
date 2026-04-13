@@ -9,3 +9,5 @@ obj/
 [Rr]elease/
 *.db-shm
 *.db-wal
+_buildcheck/
+_buildcheck_app/

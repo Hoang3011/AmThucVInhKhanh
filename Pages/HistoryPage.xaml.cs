@@ -21,6 +21,8 @@ public partial class HistoryPage : ContentPage
 
     private async Task LoadHistoryAsync()
     {
+        await PlaySyncService.FlushPendingAsync().ConfigureAwait(false);
+
         var local = await HistoryLogService.GetForCurrentUserAsync();
         var fetch = await RemotePlayHistoryService.FetchForCurrentCustomerAsync();
 

@@ -26,6 +26,37 @@
     </div>
 </div>
 
+<h2 class="h5 mt-4">Lịch sử giao dịch chi tiết (mới nhất)</h2>
+<div class="table-responsive">
+    <table class="table table-sm table-bordered">
+        <thead class="table-light">
+            <tr>
+                <th>Thời gian</th>
+                <th>POI</th>
+                <th class="text-end">Số tiền (đ)</th>
+                <th>Khách hàng</th>
+                <th>Thiết bị</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var row in Model.PaymentHistory)
+        {
+            <tr>
+                <td>@(row.PaidAtUtc == DateTime.MinValue ? "-" : row.PaidAtUtc.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss"))</td>
+                <td>@row.PlaceName <span class="text-muted">(id @row.PlaceId)</span></td>
+                <td class="text-end">@row.AmountVnd.ToString("N0")</td>
+                <td>@row.CustomerText</td>
+                <td class="text-muted small">@row.DeviceMasked</td>
+            </tr>
+        }
+        @if (Model.PaymentHistory.Count == 0)
+        {
+            <tr><td colspan="5" class="text-muted">Chưa có giao dịch demo.</td></tr>
+        }
+        </tbody>
+    </table>
+</div>
+
 <h2 class="h5">Theo từng POI</h2>
 <div class="table-responsive">
     <table class="table table-sm table-bordered">
@@ -35,6 +66,7 @@
                 <th>Tên POI</th>
                 <th class="text-end">Tổng tiền (đ)</th>
                 <th class="text-end">Số lượt trả</th>
+                <th>Khách hàng đã trả</th>
             </tr>
         </thead>
         <tbody>
@@ -45,11 +77,12 @@
                 <td>@line.PlaceName</td>
                 <td class="text-end">@line.TotalVnd.ToString("N0")</td>
                 <td class="text-end">@line.PaymentCount</td>
+                <td class="small">@Html.Raw(line.PayerSummaryHtml)</td>
             </tr>
         }
         @if (Model.Lines.Count == 0)
         {
-            <tr><td colspan="4" class="text-muted">Chưa có giao dịch demo.</td></tr>
+            <tr><td colspan="5" class="text-muted">Chưa có giao dịch demo.</td></tr>
         }
         </tbody>
     </table>

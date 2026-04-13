@@ -84,27 +84,28 @@ public class PayModel : PageModel
             return Page();
         }
 
-        int? custId = null;
         var phone = (CustomerPhone ?? string.Empty).Trim();
         var pwd = CustomerPassword ?? "";
-        if (!string.IsNullOrWhiteSpace(phone) && pwd.Length > 0)
+        if (string.IsNullOrWhiteSpace(phone) || pwd.Length == 0)
         {
-            var (ok, _, user) = await _customers.LoginAsync(phone, pwd);
-            if (!ok || user is null)
-            {
-                ResultOk = false;
-                ResultMessage = "Sai tài khoản hoặc mật khẩu. Để trống hai ô nếu chỉ trả phí trên trình duyệt này (không đồng bộ sang app khi chưa đăng nhập).";
-                return Page();
-            }
+            ResultOk = false;
+            ResultMessage = "Vui lòng quét QR tải app và tạo tài khoản trước, sau đó đăng nhập tại đây để trả phí.";
+            return Page();
+        }
 
-            custId = user.Id;
+        var (ok, _, user) = await _customers.LoginAsync(phone, pwd);
+        if (!ok || user is null)
+        {
+            ResultOk = false;
+            ResultMessage = "Không tìm thấy tài khoản hợp lệ. Vui lòng quét QR tải app, tạo tài khoản rồi đăng nhập lại để trả phí.";
+            return Page();
         }
 
         var (payOk, msg, _) = await _customers.RecordPremiumPaymentDemoAsync(
             PlaceId,
             WebDeviceId,
             place.PremiumPriceDemo,
-            custId);
+            user.Id);
 
         ResultOk = payOk;
         ResultMessage = msg;

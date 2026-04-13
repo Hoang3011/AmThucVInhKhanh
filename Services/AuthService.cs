@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS UserAccount (
         if (password.Length < 6)
             return (false, "Mật khẩu tối thiểu 6 ký tự.");
 
-        if (!string.IsNullOrWhiteSpace(PlaceApiService.GetCmsBaseUrl()))
+        if (!string.IsNullOrWhiteSpace(PlaceApiService.GetCmsBaseUrlForListenPayLinks()))
         {
             var remote = await RegisterRemoteAsync(fullName, phoneOrEmail, password);
             if (remote.Success || remote.ServerReachable)
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS UserAccount (
         if (string.IsNullOrWhiteSpace(phoneOrEmail) || string.IsNullOrWhiteSpace(password))
             return (false, "Vui lòng nhập tài khoản và mật khẩu.", null);
 
-        if (!string.IsNullOrWhiteSpace(PlaceApiService.GetCmsBaseUrl()))
+        if (!string.IsNullOrWhiteSpace(PlaceApiService.GetCmsBaseUrlForListenPayLinks()))
         {
             var remote = await LoginRemoteAsync(phoneOrEmail, password);
             if (remote.Success)
@@ -225,7 +225,7 @@ LIMIT 1;";
         try
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
-            var url = $"{PlaceApiService.GetCmsBaseUrl().TrimEnd('/')}/api/customers/register";
+            var url = $"{PlaceApiService.GetCmsBaseUrlForListenPayLinks().TrimEnd('/')}/api/customers/register";
             var res = await client.PostAsJsonAsync(url, new { fullName, phoneOrEmail, password });
             if (res.IsSuccessStatusCode)
             {
@@ -248,7 +248,7 @@ LIMIT 1;";
         try
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
-            var url = $"{PlaceApiService.GetCmsBaseUrl().TrimEnd('/')}/api/customers/login";
+            var url = $"{PlaceApiService.GetCmsBaseUrlForListenPayLinks().TrimEnd('/')}/api/customers/login";
             var res = await client.PostAsJsonAsync(url, new { phoneOrEmail, password });
             if (!res.IsSuccessStatusCode)
             {

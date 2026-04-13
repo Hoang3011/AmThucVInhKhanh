@@ -114,6 +114,39 @@ public partial class MapPage : ContentPage
         return SanitizePlaces(await LoadPlacesFromLocalDatabaseAsync());
     }
 
+    private void RebuildPoiIndexFromCurrentPois()
+    {
+        _poiIndexById = _pois
+            .Select((p, idx) => new { p, idx })
+            .Where(x => x.p is not null)
+            .GroupBy(x => x.p.Id)
+            .ToDictionary(g => g.Key, g => g.First().idx);
+    }
+
+    /// <summary>POI mới trên CMS (vd. id 11) chưa có trong danh sách đang mở — thử GET /api/places lại.</summary>
+    private async Task<bool> TryEnsurePoiLoadedFromApiAsync(int poiId)
+    {
+        if (poiId <= 0 || !PlaceApiService.HasRemoteApiConfigured())
+            return false;
+
+        try
+        {
+            var remote = await PlaceApiService.TryGetRemotePlacesAsync();
+            if (remote is null || remote.Count == 0 || !remote.Any(p => p.Id == poiId))
+                return false;
+
+            await FillMissingNarrationFromLocalAsync(remote);
+            _pois = SanitizePlaces(remote);
+            RebuildPoiIndexFromCurrentPois();
+            PopulateQrPicker();
+            return _poiIndexById.ContainsKey(poiId);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static List<Place> SanitizePlaces(List<Place> places)
     {
         foreach (var p in places)
@@ -370,7 +403,8 @@ public partial class MapPage : ContentPage
     private async Task<List<Place>> LoadPlacesFromLocalDatabaseAsync()
     {
         // false: không xóa DB trên máy mỗi lần mở map. true khi cần ép copy lại VinhKhanh.db từ bản cài.
-        const bool forceUpdate = true;   // ← dev mode
+        // false: giữ VinhKhanh.db đã copy; true mỗi lần xóa DB cục bộ — dễ mất POI mới trên CMS khi API tạm lỗi.
+        const bool forceUpdate = false;
         var result = await PlaceLocalRepository.TryLoadAsync(forceRecopyFromPackage: forceUpdate);
 
         switch (result.Error)
@@ -442,6 +476,7 @@ public partial class MapPage : ContentPage
     protected override void OnAppearing()
     {
         base.OnAppearing();
+        _ = PlaySyncService.FlushPendingAsync();
         _ = SafeLoadMapAsync();
         _ = TryStartForegroundGpsListeningAsync();
         _ = PlayWelcomeMessageAsync();
@@ -486,18 +521,19 @@ public partial class MapPage : ContentPage
 
     private async Task LoadMapAsync()
     {
-        _pois = await LoadPlacesAsync();
-        _poiIndexById = _pois
-            .Select((p, idx) => new { p, idx })
-            .Where(x => x.p is not null)
-            .GroupBy(x => x.p.Id)
-            .ToDictionary(g => g.Key, g => g.First().idx);
+        var loadPlacesTask = LoadPlacesAsync();
+        var gpsTask = TryGetCurrentLocationAsync();
+        await Task.WhenAll(loadPlacesTask, gpsTask);
+
+        _pois = await loadPlacesTask;
+        var gpsFix = await gpsTask;
+
+        RebuildPoiIndexFromCurrentPois();
         PopulateQrPicker();
 
         // Vị trí mặc định - khu Vĩnh Khánh, Q4
         double centerLat = DemoVinhKhanhLat;
         double centerLng = DemoVinhKhanhLng;
-        var gpsFix = await TryGetCurrentLocationAsync();
         if (gpsFix is not null)
         {
             centerLat = gpsFix.Latitude;
@@ -546,6 +582,21 @@ public partial class MapPage : ContentPage
             lat = x.Latitude,
             lng = x.Longitude
         })));
+
+        var hasInternet = Connectivity.Current.NetworkAccess == NetworkAccess.Internet;
+        // Chỉ dùng danh sách HTML khi *không* có Internet (CDN Leaflet không tải được).
+        // Có 4G/Wi‑Fi nhưng API CMS không tới (mạng khác): vẫn bản đồ Leaflet + POI đã load từ SQLite — geofence / bấm nghe giống hình 2.
+        var useOfflineEmbeddedMap = !hasInternet;
+
+        if (useOfflineEmbeddedMap)
+        {
+            var hint =
+                "Thiết bị đang không có Internet nên bản đồ nền (Leaflet/CDN) không tải được. Bạn vẫn có thể bấm nghe thuyết minh và các nút chức năng POI bên dưới.";
+            var offlineHtml = BuildOfflineMapHtml(poiJsArray, hint);
+            mapView.Source = new HtmlWebViewSource { Html = offlineHtml };
+            AttachMapNavigatedHandler(hasCurrentLocation, centerLat, centerLng);
+            return;
+        }
 
         string html = $@"
 <!DOCTYPE html>
@@ -1055,7 +1106,11 @@ for (var i = 0; i < pois.length; i++) {{
 </html>";
 
         mapView.Source = new HtmlWebViewSource { Html = html };
+        AttachMapNavigatedHandler(hasCurrentLocation, centerLat, centerLng);
+    }
 
+    private void AttachMapNavigatedHandler(bool hasCurrentLocation, double centerLat, double centerLng)
+    {
         if (_mapNavigatedHandler is not null)
         {
             mapView.Navigated -= _mapNavigatedHandler;
@@ -1064,9 +1119,8 @@ for (var i = 0; i < pois.length; i++) {{
 
         _mapNavigatedHandler = async (_, _) =>
         {
-            await Task.Delay(1500); // đợi map ổn định
+            await Task.Delay(450); // đợi map ổn định (ngắn hơn để test / bấm POI cảm giác nhanh hơn)
 
-            // Chỉ set vị trí giả lập lần đầu. Các lần quay lại tab Map giữ nguyên vị trí hiện tại.
             if (!_hasSimulationPosition)
             {
                 _simulatedLat = hasCurrentLocation ? centerLat : DemoVinhKhanhLat;
@@ -1086,6 +1140,73 @@ for (var i = 0; i < pois.length; i++) {{
             }
         };
         mapView.Navigated += _mapNavigatedHandler;
+    }
+
+    private static string BuildOfflineMapHtml(string poiJsArray, string hintBody)
+    {
+        var safeHint = System.Net.WebUtility.HtmlEncode(hintBody ?? string.Empty);
+        return $@"
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+  <style>
+    html, body {{ margin:0; padding:0; background:#f6f8fb; font-family:Arial,Helvetica,sans-serif; color:#1f2937; }}
+    .wrap {{ padding:14px; }}
+    .title {{ font-size:18px; font-weight:700; color:#0d47a1; margin-bottom:6px; }}
+    .hint {{ font-size:13px; color:#4b5563; margin-bottom:10px; }}
+    .card {{ background:#fff; border:1px solid #dbe3ef; border-radius:10px; padding:10px; margin-bottom:10px; }}
+    .name {{ font-size:15px; font-weight:700; margin-bottom:6px; }}
+    .desc {{ font-size:12px; color:#4b5563; margin-bottom:8px; }}
+    .row a {{ display:inline-block; margin:2px 6px 2px 0; padding:6px 10px; border-radius:8px; text-decoration:none; font-size:12px; background:#1976d2; color:#fff; }}
+    .row a.secondary {{ background:#6b7280; }}
+  </style>
+</head>
+<body>
+  <div class='wrap'>
+    <div class='title'>Bản đồ offline tạm thời</div>
+    <div class='hint'>{safeHint}</div>
+    <div id='list'></div>
+  </div>
+  <script>
+    (function(){{
+      var pois = [{poiJsArray}];
+      var host = document.getElementById('list');
+      function esc(t) {{
+        return String(t ?? '')
+          .split('&').join('&amp;')
+          .split('<').join('&lt;')
+          .split('>').join('&gt;');
+      }}
+      var html = '';
+      for (var i = 0; i < pois.length; i++) {{
+        var p = pois[i];
+        if (!p || !p.id) continue;
+        html += ""<div class='card'>""
+          + ""<div class='name'>"" + esc(p.name || ('POI #' + p.id)) + ""</div>""
+          + ""<div class='desc'>Mở mạng lại để thấy nền bản đồ chi tiết.</div>""
+          + ""<div class='row'>""
+          + ""<a href='app://speak-vi?id="" + p.id + ""'>Nghe VI</a>""
+          + ""<a href='app://speak-en?id="" + p.id + ""' class='secondary'>EN</a>""
+          + ""<a href='app://speak-zh?id="" + p.id + ""' class='secondary'>ZH</a>""
+          + ""<a href='app://speak-ja?id="" + p.id + ""' class='secondary'>JA</a>""
+          + ""</div></div>"";
+      }}
+      host.innerHTML = html || ""<div class='card'>Chưa có POI để hiển thị.</div>"";
+
+      window.openPoiById = function(){{}};
+      window.setUserMarkerPosition = function(){{}};
+      window.setNearestPoiHighlight = function(){{}};
+      window.updateGpsDebug = function(){{}};
+      window.showNavigationGuideTo = function(){{}};
+      window.clearNavigationGuide = function(){{}};
+      window.clearRoutePath = function(){{}};
+      window.showRoutePathFromBase64 = function(){{}};
+      window.showNavigationPolylineFromBase64 = function(){{}};
+    }})();
+  </script>
+</body>
+</html>";
     }
 
     // ── Event handlers cho nút di chuyển ──
@@ -1163,6 +1284,7 @@ for (var i = 0; i < pois.length; i++) {{
         {
             UpdateGeoStatusLabel("Đang cập nhật POI từ server...");
             await SafeLoadMapAsync();
+            PremiumPaymentService.ClearShortLivedEntitlementMemory();
             UpdateGeoStatusLabel("Đã cập nhật POI.");
         }
         catch (Exception ex)
@@ -1650,8 +1772,16 @@ for (var i = 0; i < pois.length; i++) {{
 
         if (!_poiIndexById.TryGetValue(poiId, out var poiIndex) || poiIndex < 0 || poiIndex >= _pois.Count)
         {
-            await DisplayAlertAsync("POI không tồn tại", "Mã QR đã quét không có trong dữ liệu hiện tại.", "OK");
-            return;
+            if (!await TryEnsurePoiLoadedFromApiAsync(poiId))
+            {
+                await DisplayAlertAsync(
+                    "POI không tồn tại",
+                    "Mã QR đã quét không có trong dữ liệu hiện tại. Hãy có mạng tới CMS, bấm Cập nhật POI, rồi quét lại.",
+                    "OK");
+                return;
+            }
+
+            poiIndex = _poiIndexById[poiId];
         }
 
         var place = _pois[poiIndex];
@@ -2245,16 +2375,22 @@ for (var i = 0; i < pois.length; i++) {{
             if (!await EnsureLocationPermissionsForContinuousTrackingAsync())
                 return null;
 
-            var request = new GeolocationRequest(GeolocationAccuracy.Medium, TimeSpan.FromSeconds(10));
+            var last = await Geolocation.Default.GetLastKnownLocationAsync();
+            // Timeout ngắn hơn để mở tab Bản đồ không chờ lâu khi GPS chậm / mạng yếu.
+            var request = new GeolocationRequest(GeolocationAccuracy.Medium, TimeSpan.FromSeconds(5));
             var location = await Geolocation.Default.GetLocationAsync(request);
-            if (location is not null)
-                return location;
-
-            return await Geolocation.Default.GetLastKnownLocationAsync();
+            return location ?? last;
         }
         catch
         {
-            return null;
+            try
+            {
+                return await Geolocation.Default.GetLastKnownLocationAsync();
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 
@@ -2602,29 +2738,16 @@ for (var i = 0; i < pois.length; i++) {{
 
     async Task<bool> EnsurePoiListenPaidAsync(Place place)
     {
-        if (place.PremiumPriceDemo <= 0)
-            return true;
-
+        // Luôn hỏi server entitlement theo PlaceId để tránh lệch dữ liệu giá local/cache.
+        // Nếu POI miễn phí trên server thì entitlement vẫn trả true.
         if (await PremiumPaymentService.CheckEntitlementAsync(place.Id))
             return true;
 
-        var priceText = place.PremiumPriceDemo.ToString("N0", CultureInfo.GetCultureInfo("vi-VN"));
-        var pay = await DisplayAlertAsync(
-            "Trả phí thuyết minh (demo)",
-            $"«{place.Name}»: {priceText} đ — mô phỏng thanh toán (gắn thiết bị; nếu đã đăng nhập tài khoản khách thì đồng bộ với web).",
-            "Trả phí",
-            "Hủy");
-        if (!pay)
-            return false;
-
-        var (ok, msg, _) = await PremiumPaymentService.PayDemoAsync(place.Id);
-        if (!ok)
-        {
-            await DisplayAlertAsync("Không thành công", msg, "OK");
-            return false;
-        }
-
-        return await PremiumPaymentService.CheckEntitlementAsync(place.Id);
+        await DisplayAlertAsync(
+            "Chưa mở khóa thuyết minh",
+            "Vui lòng thanh toán để được sử dụng dịch vụ ở địa điểm này.",
+            "OK");
+        return false;
     }
 
     async void MapView_Navigating(object sender, WebNavigatingEventArgs e)

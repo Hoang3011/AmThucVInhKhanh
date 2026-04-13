@@ -24,7 +24,8 @@ public partial class SettingsPage : ContentPage
         cmsMobileKeyEntry.Text = Preferences.Default.Get(PlaceApiService.CmsMobileApiKeyPreferenceKey, string.Empty) ?? string.Empty;
         listenPayPublicBaseEntry.Text = Preferences.Default.Get(PlaceApiService.CmsListenPayPublicBaseUrlKey, string.Empty) ?? string.Empty;
         effectiveUrlLabel.Text = $"URL hiệu lực: {PlaceApiService.GetEffectiveApiUrl()}";
-        effectiveListenPayLabel.Text = $"Gốc QR /Listen/Pay: {PlaceApiService.GetCmsBaseUrlForListenPayLinks()}";
+        effectiveListenPayLabel.Text =
+            $"Gốc 4G / QR / đồng bộ lượt phát: {PlaceApiService.GetCmsBaseUrlForListenPayLinks()}";
         statusLabel.Text = string.Empty;
     }
 
@@ -46,7 +47,8 @@ public partial class SettingsPage : ContentPage
             Preferences.Default.Set(PlaceApiService.CmsListenPayPublicBaseUrlKey, listenBase);
 
         effectiveUrlLabel.Text = $"URL hiệu lực: {PlaceApiService.GetEffectiveApiUrl()}";
-        effectiveListenPayLabel.Text = $"Gốc QR /Listen/Pay: {PlaceApiService.GetCmsBaseUrlForListenPayLinks()}";
+        effectiveListenPayLabel.Text =
+            $"Gốc 4G / QR / đồng bộ lượt phát: {PlaceApiService.GetCmsBaseUrlForListenPayLinks()}";
         statusLabel.Text = "Đã lưu URL và khóa đồng bộ (nếu có).";
     }
 
@@ -57,7 +59,8 @@ public partial class SettingsPage : ContentPage
         poiApiUrlEntry.Text = string.Empty;
         listenPayPublicBaseEntry.Text = string.Empty;
         effectiveUrlLabel.Text = $"URL hiệu lực: {PlaceApiService.GetEffectiveApiUrl()}";
-        effectiveListenPayLabel.Text = $"Gốc QR /Listen/Pay: {PlaceApiService.GetCmsBaseUrlForListenPayLinks()}";
+        effectiveListenPayLabel.Text =
+            $"Gốc 4G / QR / đồng bộ lượt phát: {PlaceApiService.GetCmsBaseUrlForListenPayLinks()}";
         statusLabel.Text = "Đã xóa URL đã lưu (Preferences).";
     }
 

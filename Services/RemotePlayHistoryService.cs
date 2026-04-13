@@ -25,7 +25,7 @@ public readonly record struct RemoteHistoryFetchResult(
 /// <summary>Tải lịch sử lượt phát từ CMS (cùng nguồn với trang /Plays) khi khách đăng nhập từ xa.</summary>
 public static class RemotePlayHistoryService
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(18) };
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(45) };
 
     public static Task<RemoteHistoryFetchResult> FetchForCurrentCustomerAsync()
         => FetchForCurrentCustomerAsync(CancellationToken.None);
@@ -48,7 +48,10 @@ public static class RemotePlayHistoryService
                 "Đăng nhập tài khoản ở tab Chính để gộp lịch sử với trang Lượt phát CMS.");
         }
 
-        var origin = PlaceApiService.GetCmsBaseUrl();
+        // Cùng gốc với đồng bộ lượt phát: ưu tiên URL công khai (Cài đặt) để 4G tới được CMS.
+        var origin = PlaceApiService.GetCmsBaseUrlForListenPayLinks();
+        if (string.IsNullOrWhiteSpace(origin))
+            origin = PlaceApiService.GetCmsBaseUrl();
         if (string.IsNullOrWhiteSpace(origin))
         {
             return new RemoteHistoryFetchResult(

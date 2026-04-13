@@ -6,25 +6,83 @@ namespace TourGuideApp2.Services;
 /// <summary>Đồng bộ lượt phát thuyết minh lên CMS (khi có URL và tài khoản đăng nhập từ máy chủ).</summary>
 public static class PlaySyncService
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(18) };
+    /// <summary>4G / mạng chậm: timeout dài hơn; lượt vẫn lưu file chờ nếu lỗi.</summary>
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(45) };
+    private static readonly SemaphoreSlim Gate = new(1, 1);
+    private static readonly string PendingFilePath = Path.Combine(FileSystem.AppDataDirectory, "play-sync-pending.json");
 
     public static void Enqueue(string placeName, string source, string language, double? durationSeconds, DateTime timestampLocal)
     {
-        _ = SendAsync(placeName, source, language, durationSeconds, timestampLocal);
+        _ = SendQueuedAndCurrentAsync(placeName, source, language, durationSeconds, timestampLocal);
     }
 
-    private static async Task SendAsync(string placeName, string source, string language, double? durationSeconds,
-        DateTime timestampLocal)
-    {
-        // Dùng cùng origin với API POI để tránh “log lên server khác”.
-        var origin = PlaceApiService.GetCmsBaseUrl();
-        if (string.IsNullOrEmpty(origin))
-            return;
+    /// <summary>Gửi lại toàn bộ lượt đang chờ (sau khi có mạng tới CMS, mở app, vào Lịch sử/Bản đồ).</summary>
+    public static Task FlushPendingAsync(CancellationToken cancellationToken = default)
+        => FlushPendingCoreAsync(cancellationToken);
 
+    private static async Task FlushPendingCoreAsync(CancellationToken cancellationToken)
+    {
         try
         {
-            var url = $"{origin.TrimEnd('/')}/api/plays/log";
-            var body = new PlayLogDto
+            await Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var pending = await ReadPendingAsync().ConfigureAwait(false);
+                if (pending.Count == 0)
+                    return;
+
+                var origin = ResolveSyncOrigin();
+                if (string.IsNullOrWhiteSpace(origin))
+                    return;
+
+                await DrainQueueAsync(origin, pending, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                Gate.Release();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Bỏ qua.
+        }
+        catch
+        {
+            // Không chặn UI.
+        }
+    }
+
+    private static string? ResolveSyncOrigin()
+    {
+        var o = PlaceApiService.GetCmsBaseUrlForListenPayLinks();
+        if (!string.IsNullOrWhiteSpace(o))
+            return o.TrimEnd('/');
+        o = PlaceApiService.GetCmsBaseUrl();
+        return string.IsNullOrWhiteSpace(o) ? null : o.TrimEnd('/');
+    }
+
+    /// <summary>Gửi tuần tự từ đầu; gặp lỗi thì giữ từ phần tử đó trở đi.</summary>
+    private static async Task DrainQueueAsync(string origin, List<PlayLogDto> pending, CancellationToken cancellationToken)
+    {
+        for (var i = 0; i < pending.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!await TrySendOneAsync(origin, pending[i]).ConfigureAwait(false))
+            {
+                await WritePendingAsync(pending.Skip(i).ToList()).ConfigureAwait(false);
+                return;
+            }
+        }
+
+        await WritePendingAsync([]).ConfigureAwait(false);
+    }
+
+    private static async Task SendQueuedAndCurrentAsync(string placeName, string source, string language, double? durationSeconds,
+        DateTime timestampLocal)
+    {
+        try
+        {
+            var current = new PlayLogDto
             {
                 CustomerUserId = AuthService.GetCustomerIdForServerSync(),
                 PlaceName = placeName,
@@ -34,6 +92,37 @@ public static class PlaySyncService
                 PlayedAtUtc = timestampLocal.ToUniversalTime().ToString("O")
             };
 
+            await Gate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                var pending = await ReadPendingAsync().ConfigureAwait(false);
+                pending.Add(current);
+
+                var origin = ResolveSyncOrigin();
+                if (string.IsNullOrWhiteSpace(origin))
+                {
+                    await WritePendingAsync(pending).ConfigureAwait(false);
+                    return;
+                }
+
+                await DrainQueueAsync(origin, pending, CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                Gate.Release();
+            }
+        }
+        catch
+        {
+            // Không chặn UI nếu máy chủ tắt hoặc mạng lỗi.
+        }
+    }
+
+    private static async Task<bool> TrySendOneAsync(string origin, PlayLogDto body)
+    {
+        try
+        {
+            var url = $"{origin.TrimEnd('/')}/api/plays/log";
             using var req = new HttpRequestMessage(HttpMethod.Post, url);
             req.Content = JsonContent.Create(body);
             var mobileKey = PlaceApiService.GetMobileApiKeyForSync();
@@ -42,10 +131,39 @@ public static class PlaySyncService
 
             using var res = await Http.SendAsync(req).ConfigureAwait(false);
             _ = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+            return res.IsSuccessStatusCode;
         }
         catch
         {
-            // Không chặn UI nếu máy chủ tắt hoặc mạng lỗi.
+            return false;
+        }
+    }
+
+    private static async Task<List<PlayLogDto>> ReadPendingAsync()
+    {
+        try
+        {
+            if (!File.Exists(PendingFilePath))
+                return [];
+            await using var s = File.OpenRead(PendingFilePath);
+            return await System.Text.Json.JsonSerializer.DeserializeAsync<List<PlayLogDto>>(s).ConfigureAwait(false) ?? [];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static async Task WritePendingAsync(List<PlayLogDto> pending)
+    {
+        try
+        {
+            await using var s = File.Create(PendingFilePath);
+            await System.Text.Json.JsonSerializer.SerializeAsync(s, pending).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Bỏ qua lỗi file cục bộ để không ảnh hưởng luồng phát.
         }
     }
 

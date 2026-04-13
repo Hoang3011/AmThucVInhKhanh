@@ -40,15 +40,15 @@
                    TextColor="#263238"
                    PlaceholderColor="#90A4AE" />
 
-            <Label Text="Gốc CMS cho QR / Zalo (tùy chọn)"
+            <Label Text="Gốc CMS công khai — 4G / QR / đồng bộ lượt phát (tùy chọn)"
                    FontSize="14"
                    FontAttributes="Bold"
                    TextColor="{StaticResource Primary}" />
-            <Label Text="Khi URL API là localhost/10.0.2.2, điền gốc LAN mà điện thoại khác mở được (vd. http://192.168.1.5:5095). Để trống thì app thử suy từ URL đóng gói / đã lưu."
+            <Label Text="LAN: http://192.168.x.x:port. Muốn 4G thấy lượt phát trên web ngay: dùng ngrok/tunnel (https://xxx.ngrok-free.app) trỏ vào cổng CMS — hoặc điền trong AppConfig.DefaultPublicCmsBaseUrl khi build."
                    FontSize="12"
                    TextColor="#546E7A" />
             <Entry x:Name="listenPayPublicBaseEntry"
-                   Placeholder="http://192.168.x.x:5095"
+                   Placeholder="https://xxx.ngrok-free.app hoặc http://192.168.x.x:5095"
                    Keyboard="Url"
                    BackgroundColor="#F5F7FA"
                    HeightRequest="44"

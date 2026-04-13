@@ -39,7 +39,7 @@ public static class CustomerRouteSyncService
         if (AuthService.GetCustomerIdForServerSync() is not { } uid)
             return;
 
-        var origin = PlaceApiService.GetCmsBaseUrl();
+        var origin = PlaceApiService.GetCmsBaseUrlForListenPayLinks();
         if (string.IsNullOrWhiteSpace(origin))
             return;
 

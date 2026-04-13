@@ -27,6 +27,12 @@ public static class PlaceApiService
         Timeout = TimeSpan.FromSeconds(15)
     };
 
+    /// <summary>Timeout ngắn khi tải danh sách POI — tránh tab Bản đồ “đơ” hàng chục giây khi API/CMS không tới được (mạng khác).</summary>
+    private static readonly HttpClient PlacesFetchHttp = new()
+    {
+        Timeout = TimeSpan.FromSeconds(4)
+    };
+
     private static readonly JsonSerializerOptions JsonDefault = new()
     {
         PropertyNameCaseInsensitive = true
@@ -76,7 +82,10 @@ public static class PlaceApiService
         return false;
     }
 
-    /// <summary>Gốc CMS dùng cho hyperlink /Listen/Pay (điện thoại khác, Zalo) — tránh localhost.</summary>
+    /// <summary>
+    /// Gốc CMS cho QR/Zalo, **đồng bộ lượt phát**, entitlement, đăng nhập từ xa khi cần host **4G** tới được.
+    /// Thứ tự: Cài đặt → <see cref="AppConfig.DefaultPublicCmsBaseUrl"/> → API POI nếu không phải localhost.
+    /// </summary>
     public static string GetCmsBaseUrlForListenPayLinks()
     {
         var explicitBase = (Preferences.Default.Get(CmsListenPayPublicBaseUrlKey, "") ?? "").Trim().TrimEnd('/');
@@ -84,6 +93,12 @@ public static class PlaceApiService
             && Uri.TryCreate(explicitBase, UriKind.Absolute, out var ex)
             && !IsHostUnusableForPhoneQr(ex.Host))
             return $"{ex.Scheme}://{ex.Authority}";
+
+        var cfgPublic = (AppConfig.DefaultPublicCmsBaseUrl ?? string.Empty).Trim().TrimEnd('/');
+        if (!string.IsNullOrEmpty(cfgPublic)
+            && Uri.TryCreate(cfgPublic, UriKind.Absolute, out var cfgU)
+            && !IsHostUnusableForPhoneQr(cfgU.Host))
+            return $"{cfgU.Scheme}://{cfgU.Authority}";
 
         var cms = GetCmsBaseUrl().TrimEnd('/');
         if (!string.IsNullOrEmpty(cms)
@@ -130,7 +145,7 @@ public static class PlaceApiService
                 request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {apiKey}");
             }
 
-            using var response = await Http.SendAsync(request);
+            using var response = await PlacesFetchHttp.SendAsync(request);
             if (!response.IsSuccessStatusCode)
                 return null;
 

@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Maui.Networking;
+using TourGuideApp2.Services;
 
 namespace TourGuideApp2
 {
@@ -7,11 +9,23 @@ namespace TourGuideApp2
         public App()
         {
             InitializeComponent();
+            Connectivity.ConnectivityChanged += (_, _) =>
+            {
+                if (Connectivity.Current.NetworkAccess == NetworkAccess.Internet)
+                    _ = PlaySyncService.FlushPendingAsync();
+            };
         }
 
         protected override Window CreateWindow(IActivationState? activationState)
         {
             return new Window(new AppShell());
+        }
+
+        protected override void OnResume()
+        {
+            base.OnResume();
+            PremiumPaymentService.ClearShortLivedEntitlementMemory();
+            _ = PlaySyncService.FlushPendingAsync();
         }
 
         protected override void OnSleep()

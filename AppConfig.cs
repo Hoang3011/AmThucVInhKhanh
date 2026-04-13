@@ -9,6 +9,12 @@ public static class AppConfig
     public const string DefaultPoiApiUrl = "http://192.168.1.101:5095/api/places";
     public const string DefaultPoiApiKey = "";
 
+    /// <summary>
+    /// Gốc CMS mà **4G** gọi được (ngrok, Cloudflare Tunnel, domain public…). Để trống = app chỉ đồng bộ lượt phát/entitlement qua LAN như <see cref="DefaultPoiApiUrl"/>.
+    /// Ví dụ sau khi chạy tunnel trỏ vào cổng CMS: <c>https://abc123.ngrok-free.app</c> (không có slash cuối).
+    /// </summary>
+    public const string DefaultPublicCmsBaseUrl = "";
+
     /// <summary>Khóa trùng <c>App:MobileApiKey</c> trên CMS (để trống = không kiểm tra).</summary>
     public const string MobileApiKey = "";
 
