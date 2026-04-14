@@ -78,43 +78,42 @@ public static class PlaySyncService
     }
 
     private static async Task SendQueuedAndCurrentAsync(string placeName, string source, string language, double? durationSeconds,
-        DateTime timestampLocal)
+    DateTime timestampLocal)
     {
+        var current = new PlayLogDto
+        {
+            CustomerUserId = AuthService.GetCustomerIdForServerSync(),
+            PlaceName = placeName,
+            Source = source,
+            Language = language,
+            DurationSeconds = durationSeconds,
+            PlayedAtUtc = timestampLocal.ToUniversalTime().ToString("O")
+        };
+
+        await Gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            var current = new PlayLogDto
+            var pending = await ReadPendingAsync().ConfigureAwait(false);
+            pending.Add(current);
+
+            var origin = ResolveSyncOrigin();
+
+            // === THAY ĐỔI Ở ĐÂY: Luôn lưu local trước ===
+            await WritePendingAsync(pending).ConfigureAwait(false);
+
+            // Chỉ thử gửi nếu có địa chỉ CMS
+            if (!string.IsNullOrWhiteSpace(origin))
             {
-                CustomerUserId = AuthService.GetCustomerIdForServerSync(),
-                PlaceName = placeName,
-                Source = source,
-                Language = language,
-                DurationSeconds = durationSeconds,
-                PlayedAtUtc = timestampLocal.ToUniversalTime().ToString("O")
-            };
-
-            await Gate.WaitAsync().ConfigureAwait(false);
-            try
-            {
-                var pending = await ReadPendingAsync().ConfigureAwait(false);
-                pending.Add(current);
-
-                var origin = ResolveSyncOrigin();
-                if (string.IsNullOrWhiteSpace(origin))
-                {
-                    await WritePendingAsync(pending).ConfigureAwait(false);
-                    return;
-                }
-
                 await DrainQueueAsync(origin, pending, CancellationToken.None).ConfigureAwait(false);
             }
-            finally
+            else
             {
-                Gate.Release();
+                System.Diagnostics.Debug.WriteLine("⚠️ CMS chưa cấu hình hoặc đang tắt → log đã lưu local");
             }
         }
-        catch
+        finally
         {
-            // Không chặn UI nếu máy chủ tắt hoặc mạng lỗi.
+            Gate.Release();
         }
     }
 

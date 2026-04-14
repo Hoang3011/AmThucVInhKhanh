@@ -21,17 +21,23 @@ public partial class HistoryPage : ContentPage
 
     private async Task LoadHistoryAsync()
     {
+        // === Tự động đồng bộ log đang chờ lên CMS (nếu CMS đang bật) ===
         await PlaySyncService.FlushPendingAsync().ConfigureAwait(false);
 
+        // Lấy log cục bộ
         var local = await HistoryLogService.GetForCurrentUserAsync();
+
+        // Thử lấy từ server (nếu CMS đang chạy)
         var fetch = await RemotePlayHistoryService.FetchForCurrentCustomerAsync();
 
         var serverList = fetch.Status == RemoteHistoryFetchStatus.Ok
             ? fetch.Items.ToList()
-            : [];
+            : new List<HistoryEntry>();
 
-        // Đẩy lại lượt chỉ có trên máy (trước đó gửi log không kèm CustomerUserId) để khớp cột Khách trên CMS.
-        if (fetch.Status == RemoteHistoryFetchStatus.Ok && AuthService.GetCustomerIdForServerSync() is not null && local.Count > 0)
+        // Đẩy lại những log chỉ có cục bộ (để khớp với CMS)
+        if (fetch.Status == RemoteHistoryFetchStatus.Ok
+            && AuthService.GetCustomerIdForServerSync() is not null
+            && local.Count > 0)
         {
             var pushed = false;
             foreach (var l in local)
@@ -45,9 +51,8 @@ public partial class HistoryPage : ContentPage
 
             if (pushed)
             {
-                // Nhiều POST nối đuôi — chờ CMS ghi xong trước khi GET lại.
-                var ms = Math.Clamp(local.Count * 120, 450, 2800);
-                await Task.Delay(ms).ConfigureAwait(false);
+                // Đợi một chút để CMS ghi dữ liệu xong
+                await Task.Delay(800).ConfigureAwait(false);
                 fetch = await RemotePlayHistoryService.FetchForCurrentCustomerAsync().ConfigureAwait(false);
                 if (fetch.Status == RemoteHistoryFetchStatus.Ok)
                     serverList = fetch.Items.ToList();
@@ -55,13 +60,17 @@ public partial class HistoryPage : ContentPage
         }
 
         var entries = MergeHistoryForDisplay(serverList, local);
+
+        // === Xây dựng thông báo đồng bộ rõ ràng hơn ===
         var syncHint = BuildSyncStatusText(fetch);
 
         await MainThread.InvokeOnMainThreadAsync(() =>
         {
             syncStatusLabel.Text = syncHint.Text;
             syncStatusLabel.TextColor = syncHint.Color;
+
             BindStatistics(entries);
+
             _items = entries
                 .OrderByDescending(x => x.Timestamp)
                 .Select(x => new HistoryEntryViewItem
@@ -82,19 +91,21 @@ public partial class HistoryPage : ContentPage
         return fetch.Status switch
         {
             RemoteHistoryFetchStatus.Ok =>
-                ($"Đồng bộ CMS: OK — {fetch.Items.Count} lượt trên máy chủ (đã gộp với cục bộ, trùng giờ sẽ gộp 1 dòng).",
-                    Color.FromArgb("#2E7D32")),
-            RemoteHistoryFetchStatus.SkippedNotRemoteSession =>
-                ($"Đồng bộ CMS: {fetch.Message}", Color.FromArgb("#546E7A")),
-            RemoteHistoryFetchStatus.SkippedLocalSession =>
-                ($"Đồng bộ CMS: {fetch.Message}", Color.FromArgb("#5D4037")),
+                ($"Đồng bộ CMS: OK — {fetch.Items.Count} lượt trên máy chủ",
+                 Color.FromArgb("#2E7D32")),
+
             RemoteHistoryFetchStatus.SkippedNoCmsUrl =>
-                ($"Đồng bộ CMS: {fetch.Message}", Color.FromArgb("#E65100")),
-            RemoteHistoryFetchStatus.Unauthorized =>
-                ($"Đồng bộ CMS: {fetch.Message}", Color.FromArgb("#C62828")),
+                ("Đồng bộ CMS: Chưa cấu hình URL CMS", Color.FromArgb("#E65100")),
+
+            RemoteHistoryFetchStatus.Failed when fetch.Message?.Contains("Connection", StringComparison.OrdinalIgnoreCase) == true
+                || fetch.Message?.Contains("failure", StringComparison.OrdinalIgnoreCase) == true =>
+                ("Đồng bộ CMS: CMS đang tắt hoặc không kết nối được.\nLog đã được lưu cục bộ, sẽ tự động gửi khi bật CMS.",
+                 Color.FromArgb("#F57C00")),   // màu cam thay vì đỏ
+
             RemoteHistoryFetchStatus.Failed =>
                 ($"Đồng bộ CMS: lỗi — {fetch.Message}", Color.FromArgb("#C62828")),
-            _ => ("Đồng bộ CMS: không xác định.", Color.FromArgb("#555555"))
+
+            _ => ("Đồng bộ CMS: " + (fetch.Message ?? "không xác định"), Color.FromArgb("#555555"))
         };
     }
 

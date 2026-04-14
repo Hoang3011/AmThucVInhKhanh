@@ -17,7 +17,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Diagnostics;
 namespace TourGuideApp2;
-
+using TourGuideApp2.Services;
 public partial class MapPage : ContentPage
 {
     private List<Place> _pois = [];
@@ -395,7 +395,7 @@ public partial class MapPage : ContentPage
         CancelBusStopSpeech();
         var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(-1, lang, text);
         UpdateLastPlayedLabel("Chỉ đường (rẽ)", "Chỉ đường");
-        await HistoryLogService.AddAsync("Chỉ đường (rẽ)", "Chỉ đường", lang, durationSeconds);
+        PlaySyncService.Enqueue("Chỉ đường (rẽ)", "Chỉ đường", lang, durationSeconds, DateTime.Now);
         _nextFootNavCueIndex++;
         _lastFootNavTtsUtc = now;
     }
@@ -473,10 +473,14 @@ public partial class MapPage : ContentPage
         btnCurrentLang.Text = "🇯🇵 JA";
         langOptions.IsVisible = false;
     }
-    protected override void OnAppearing()
+    protected override async void OnAppearing()
     {
         base.OnAppearing();
-        _ = PlaySyncService.FlushPendingAsync();
+
+        // Tự động đồng bộ log lượt phát thuyết minh ngay khi vào MapPage
+        await AutoSyncPlaybackLogsAsync();
+
+        // Các lệnh cũ giữ nguyên (chạy nền không chặn UI)
         _ = SafeLoadMapAsync();
         _ = TryStartForegroundGpsListeningAsync();
         _ = PlayWelcomeMessageAsync();
@@ -1546,7 +1550,7 @@ for (var i = 0; i < pois.length; i++) {{
         {
             var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(poiIndex, _selectedLanguage, text, ct);
             UpdateLastPlayedLabel(place.Name, "BusStop");
-            await HistoryLogService.AddAsync(place.Name, "BusStop", _selectedLanguage, durationSeconds);
+            PlaySyncService.Enqueue(place.Name, "BusStop", _selectedLanguage, durationSeconds, DateTime.Now);
         }
         catch (OperationCanceledException)
         {
@@ -1798,7 +1802,7 @@ for (var i = 0; i < pois.length; i++) {{
             {
                 var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(poiIndex, _selectedLanguage, text);
                 UpdateLastPlayedLabel(place.Name, "QR");
-                await HistoryLogService.AddAsync(place.Name, "QR", _selectedLanguage, durationSeconds);
+                PlaySyncService.Enqueue(place.Name, "QR", _selectedLanguage, durationSeconds, DateTime.Now);
             }
             catch (OperationCanceledException)
             {
@@ -2234,7 +2238,7 @@ for (var i = 0; i < pois.length; i++) {{
             UpdateCooldownLabel(speakPoiIndex);
             if (ShouldLogAutoGeo(speakPoiIndex))
             {
-                await HistoryLogService.AddAsync(speakPlace.Name, "AutoGeo", _selectedLanguage, durationSeconds);
+                PlaySyncService.Enqueue(speakPlace.Name, "AutoGeo", _selectedLanguage, durationSeconds, DateTime.Now);
             }
         }
         catch (OperationCanceledException)
@@ -2866,7 +2870,7 @@ for (var i = 0; i < pois.length; i++) {{
                 CancelBusStopSpeech();
                 var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(-1, lang, tts);
                 UpdateLastPlayedLabel(label, "Chỉ đường");
-                await HistoryLogService.AddAsync(label, "Chỉ đường", lang, durationSeconds);
+                PlaySyncService.Enqueue(label, "Chỉ đường", lang, durationSeconds, DateTime.Now);
             }
             catch
             {
@@ -2918,7 +2922,7 @@ for (var i = 0; i < pois.length; i++) {{
             CancelBusStopSpeech();
             var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(poiIndex, speakLang, text ?? "");
             UpdateLastPlayedLabel(place.Name, "Map");
-            await HistoryLogService.AddAsync(place.Name, "Map", speakLang, durationSeconds);
+            PlaySyncService.Enqueue(place.Name, "Map", speakLang, durationSeconds, DateTime.Now);
         }
         catch { }
     }
@@ -2986,5 +2990,20 @@ for (var i = 0; i < pois.length; i++) {{
         if (normalized.StartsWith("vi", StringComparison.Ordinal))
             return "vi";
         return "vi";
+    }
+    private async Task AutoSyncPlaybackLogsAsync()
+    {
+        try
+        {
+            // Gọi service đã có sẵn trong project (PlaySyncService tự xử lý queue local + gửi HTTP lên CMS)
+            await PlaySyncService.FlushPendingAsync();   // Đây là hàm đồng bộ pending logs
+
+            System.Diagnostics.Debug.WriteLine("✅ [MapPage] Đã tự động sync log lượt phát thuyết minh");
+        }
+        catch (Exception ex)
+        {
+            // Không làm app crash nếu CMS đang tắt hoặc lỗi mạng
+            System.Diagnostics.Debug.WriteLine($"[MapPage] Sync log thất bại (bình thường nếu CMS tắt): {ex.Message}");
+        }
     }
 }
