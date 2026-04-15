@@ -50,13 +50,13 @@ public static class PlaceApiService
     /// </summary>
     public static string GetEffectiveApiUrl()
     {
-        // App khách dùng URL đóng gói trong AppConfig để tránh user chỉnh sai cấu hình.
-        var apiUrl = AppConfig.DefaultPoiApiUrl.Trim();
-        if (!string.IsNullOrWhiteSpace(apiUrl))
-            return apiUrl;
+        // Ưu tiên URL người dùng nhập ở Cài đặt (đổi IP LAN/tunnel theo mạng thực tế).
+        var fromPrefs = (Preferences.Default.Get(PoiApiUrlPreferenceKey, string.Empty) ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(fromPrefs))
+            return fromPrefs;
 
-        // Fallback an toàn cho các bản build cũ đã lưu URL trước đó.
-        return (Preferences.Default.Get(PoiApiUrlPreferenceKey, string.Empty) ?? string.Empty).Trim();
+        // Fallback: URL đóng gói theo bản build.
+        return AppConfig.DefaultPoiApiUrl.Trim();
     }
 
     public static bool HasRemoteApiConfigured()
