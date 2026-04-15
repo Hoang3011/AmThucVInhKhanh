@@ -514,7 +514,7 @@ public sealed class CustomerAccountRepository
             cmd.CommandText = """
                 SELECT IFNULL(SUM(AmountVnd), 0) FROM PoiPremiumPayment
                 WHERE PlaceId = @p
-                  AND (DeviceInstallId = @d OR CustomerUserId = @c)
+                  AND CustomerUserId = @c
                 """;
             cmd.Parameters.AddWithValue("@c", customerUserId.Value);
         }

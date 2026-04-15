@@ -223,12 +223,18 @@ public static class PlaceApiService
     private static PoiApiItem? DeserializePoiItem(JsonElement el)
     {
         var raw = el.GetRawText();
-        var snake = JsonSerializer.Deserialize<PoiApiItem>(raw, JsonSnake);
-        if (IsUsablePoiItem(snake))
-            return snake;
-
         var fallback = JsonSerializer.Deserialize<PoiApiItem>(raw, JsonDefault);
-        return IsUsablePoiItem(fallback) ? fallback : snake ?? fallback;
+        var snake = JsonSerializer.Deserialize<PoiApiItem>(raw, JsonSnake);
+
+        // API nội bộ CMS trả camelCase; một số nguồn ngoài trả snake_case.
+        // Chọn bản parse có dữ liệu "giàu" hơn để tránh mất text đa ngôn ngữ.
+        var fallbackScore = ScorePoiItem(fallback);
+        var snakeScore = ScorePoiItem(snake);
+
+        if (fallbackScore >= snakeScore)
+            return IsUsablePoiItem(fallback) ? fallback : snake ?? fallback;
+
+        return IsUsablePoiItem(snake) ? snake : fallback ?? snake;
     }
 
     private static bool IsUsablePoiItem(PoiApiItem? i)
@@ -237,6 +243,23 @@ public static class PlaceApiService
         if (!string.IsNullOrWhiteSpace(i.Name))
             return true;
         return i.Latitude != 0 || i.Longitude != 0;
+    }
+
+    private static int ScorePoiItem(PoiApiItem? i)
+    {
+        if (i is null) return -1;
+
+        var score = 0;
+        if (!string.IsNullOrWhiteSpace(i.Name)) score += 4;
+        if (i.Latitude != 0 || i.Longitude != 0) score += 3;
+        if (!string.IsNullOrWhiteSpace(i.Description)) score += 2;
+        if (!string.IsNullOrWhiteSpace(i.VietnameseAudioText)) score += 3;
+        if (!string.IsNullOrWhiteSpace(i.EnglishAudioText)) score += 3;
+        if (!string.IsNullOrWhiteSpace(i.ChineseAudioText)) score += 3;
+        if (!string.IsNullOrWhiteSpace(i.JapaneseAudioText)) score += 3;
+        if (!string.IsNullOrWhiteSpace(i.Specialty)) score += 1;
+        if (!string.IsNullOrWhiteSpace(i.MapUrl)) score += 1;
+        return score;
     }
 
     private static Place? MapApiPoiToPlace(PoiApiItem dto)
