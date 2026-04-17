@@ -11,8 +11,15 @@ namespace TourGuideApp2
             InitializeComponent();
             Connectivity.ConnectivityChanged += (_, _) =>
             {
-                if (Connectivity.Current.NetworkAccess == NetworkAccess.Internet)
-                    _ = PlaySyncService.FlushPendingAsync();
+                try
+                {
+                    if (Connectivity.Current.NetworkAccess == NetworkAccess.Internet)
+                        _ = PlaySyncService.FlushPendingAsync();
+                }
+                catch
+                {
+                    // Không để sự kiện mạng làm văng app.
+                }
             };
         }
 
@@ -25,7 +32,14 @@ namespace TourGuideApp2
         {
             base.OnResume();
             PremiumPaymentService.ClearShortLivedEntitlementMemory();
-            _ = PlaySyncService.FlushPendingAsync();
+            try
+            {
+                _ = PlaySyncService.FlushPendingAsync();
+            }
+            catch
+            {
+                // Bỏ qua — không chặn resume.
+            }
         }
 
         protected override void OnSleep()

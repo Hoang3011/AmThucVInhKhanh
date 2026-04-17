@@ -6,6 +6,7 @@ namespace TourGuideApp2;
 /// </summary>
 public static class AppConfig
 {
+    /// <summary>Mặc định khi người dùng chưa nhập URL trong Cài đặt — nhiều thiết bị nên dùng chung URL máy chạy CMS (LAN).</summary>
     public const string DefaultPoiApiUrl = "http://192.168.1.101:5095/api/places";
     public const string DefaultPoiApiKey = "";
 

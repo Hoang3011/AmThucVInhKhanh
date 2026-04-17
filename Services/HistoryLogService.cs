@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Maui.Storage;
 using TourGuideApp2.Models;
 
 namespace TourGuideApp2.Services;
@@ -6,7 +7,9 @@ namespace TourGuideApp2.Services;
 public static class HistoryLogService
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
-    private static readonly string FilePath = Path.Combine(FileSystem.AppDataDirectory, "history-log.json");
+    private static string? _filePath;
+
+    private static string FilePath => _filePath ??= Path.Combine(FileSystem.AppDataDirectory, "history-log.json");
 
     private static string GetCurrentAccountKey()
     {

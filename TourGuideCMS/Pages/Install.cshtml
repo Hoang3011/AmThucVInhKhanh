@@ -1,0 +1,103 @@
+@page "/Install"
+@model TourGuideCMS.Pages.InstallModel
+@{
+    ViewData["Title"] = "Tải app — AmThucVinhKhanh";
+}
+<div class="container py-4" style="max-width: 560px;">
+    <h4 class="mb-3">Tải ứng dụng MAUI</h4>
+    <p class="small text-muted">
+        Quét mã QR trên trang chủ CMS hoặc bên dưới để mở đúng link (APK/ghi chú). Cùng LAN hoặc qua tunnel (ngrok / Cloudflare Tunnel): đặt <code>App:PublicBaseUrl</code> trong <code>appsettings.json</code> = URL https công khai (không slash cuối) để QR và link đúng khi không cùng WiFi.
+    </p>
+    @if (Model.FromQr && !string.IsNullOrEmpty(Model.EffectiveDownloadUrl))
+    {
+        <div class="alert alert-info py-2 small">
+            Đang chuẩn bị tải app... Nếu chưa thấy hộp thoại cài đặt, bấm nút bên dưới hoặc mở bằng Chrome.
+        </div>
+    }
+
+    @if (Model.Uploaded)
+    {
+        <div class="alert alert-success py-2 small">Upload APK thành công. Quét lại QR để tải/cài trên thiết bị khác.</div>
+    }
+    @if (Model.UploadError)
+    {
+        <div class="alert alert-warning py-2 small">Upload thất bại. Vui lòng chọn đúng file <code>.apk</code>.</div>
+    }
+
+    <form method="post" action="/api/install/upload-apk" enctype="multipart/form-data" class="mb-3">
+        <label class="form-label small fw-bold">Upload file APK nhanh (LAN)</label>
+        <input type="file" name="apkFile" accept=".apk,application/vnd.android.package-archive" class="form-control form-control-sm mb-2" />
+        <button type="submit" class="btn btn-sm btn-primary">Upload APK & bật QR cài app</button>
+    </form>
+
+    @if (!string.IsNullOrEmpty(Model.EffectiveDownloadUrl))
+    {
+        <p>
+            <a class="btn btn-primary" href="@Model.EffectiveDownloadUrl" rel="noopener">Tải / cài đặt app</a>
+            <a class="btn btn-outline-secondary ms-2" href="@Model.EffectiveDownloadUrl" target="_blank" rel="noopener">Mở bằng trình duyệt ngoài</a>
+        </p>
+        <p class="mt-2">
+            <a class="btn btn-success" href="@Model.AppSetupDeepLink" rel="noopener">Mở app & tự cấu hình đồng bộ</a>
+        </p>
+        <p class="small text-muted">
+            Sau khi cài xong, bấm nút xanh một lần để app tự nhận URL CMS (không cần mở Cài đặt trong app).
+        </p>
+    }
+    else
+    {
+        <p class="small">
+            Chưa cấu hình <code>App:AppDownloadUrl</code>.
+            Để quét QR là hiện “Bạn có muốn cài app này không?” trên thiết bị khác, bạn có 2 cách:
+        </p>
+        <ul class="small">
+            <li>
+                <strong>Cách 1 (khuyên dùng trong LAN)</strong>: copy file APK vào
+                <code>TourGuideCMS/wwwroot/downloads/AmThucVinhKhanh.apk</code>.
+                Khi đó QR <code>/qr/app</code> sẽ trỏ thẳng tới file APK và điện thoại sẽ hỏi tải/cài.
+            </li>
+            <li>
+                <strong>Cách 2</strong>: điền <code>App:AppDownloadUrl</code> trong <code>appsettings.json</code> bằng link APK public / link store.
+            </li>
+        </ul>
+        <p class="small text-muted mb-0">
+            Lưu ý: Android có thể yêu cầu bật “Cài đặt từ nguồn không xác định” cho trình duyệt khi cài APK.
+        </p>
+    }
+
+    <hr class="my-4" />
+    <h5 class="mb-2">Đồng bộ nhiều thiết bị với web</h5>
+    <p class="small mb-1">Trong app: <strong>Cài đặt</strong> → dán URL API POI (cùng cho mọi máy):</p>
+    <code class="d-block p-2 mb-3 bg-dark text-light rounded small" style="word-break: break-all;">@Model.ApiPlacesUrl</code>
+    <p class="small text-muted mb-0">
+        Nội dung mã QR “tải app” hiện trỏ tới: <span class="text-body">@Model.QrPayloadUrl</span>
+    </p>
+
+    <div class="text-center mt-4">
+        <img src="@Model.QrAppImageSrc" alt="QR tải app" class="img-fluid shadow-sm" style="max-width: 220px; border-radius: 12px; border: 1px solid #dee2e6;" />
+        <p class="small text-muted mt-2 mb-0">Cùng mã với khối “Tải app” trên trang chủ CMS.</p>
+    </div>
+</div>
+
+@if (Model.FromQr && !string.IsNullOrEmpty(Model.EffectiveDownloadUrl))
+{
+    <script>
+        // Webview (Zalo/Facebook/...) đôi khi không mở APK trực tiếp.
+        // Thử mở Chrome qua intent trước, rồi fallback về link APK thường.
+        var target = '@Model.EffectiveDownloadUrl';
+        var isAndroid = /Android/i.test(navigator.userAgent || '');
+        if (isAndroid && target.startsWith('http')) {
+            try {
+                var noScheme = target.replace(/^https?:\/\//i, '');
+                var scheme = target.startsWith('https:') ? 'https' : 'http';
+                var intentUrl = 'intent://' + noScheme + '#Intent;scheme=' + scheme + ';package=com.android.chrome;end';
+                window.location.href = intentUrl;
+            } catch (e) {
+                // ignore
+            }
+        }
+
+        setTimeout(function () {
+            window.location.href = target;
+        }, 500);
+    </script>
+}

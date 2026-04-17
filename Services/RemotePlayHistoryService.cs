@@ -25,7 +25,14 @@ public readonly record struct RemoteHistoryFetchResult(
 /// <summary>Tải lịch sử lượt phát từ CMS (cùng nguồn với trang /Plays) khi khách đăng nhập từ xa.</summary>
 public static class RemotePlayHistoryService
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(45) };
+    private static readonly HttpClient Http = CreateHttp();
+
+    private static HttpClient CreateHttp()
+    {
+        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
+        CmsTunnelHttp.ApplyTo(h);
+        return h;
+    }
 
     public static Task<RemoteHistoryFetchResult> FetchForCurrentCustomerAsync()
         => FetchForCurrentCustomerAsync(CancellationToken.None);
@@ -48,11 +55,8 @@ public static class RemotePlayHistoryService
                 "Đăng nhập tài khoản ở tab Chính để gộp lịch sử với trang Lượt phát CMS.");
         }
 
-        // Cùng gốc với đồng bộ lượt phát: ưu tiên URL công khai (Cài đặt) để 4G tới được CMS.
-        var origin = PlaceApiService.GetCmsBaseUrlForListenPayLinks();
-        if (string.IsNullOrWhiteSpace(origin))
-            origin = PlaceApiService.GetCmsBaseUrl();
-        if (string.IsNullOrWhiteSpace(origin))
+        var origins = PlaceApiService.GetCmsBaseUrlCandidatesForSync();
+        if (origins.Count == 0)
         {
             return new RemoteHistoryFetchResult(
                 RemoteHistoryFetchStatus.SkippedNoCmsUrl,
@@ -61,55 +65,59 @@ public static class RemotePlayHistoryService
         }
 
         var id = AuthService.GetCustomerIdForServerSync()!.Value;
-        var url = $"{origin.TrimEnd('/')}/api/plays/history?customerUserId={id}";
+        string? lastFailure = null;
 
-        try
+        foreach (var origin in origins)
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, url);
-            var mobileKey = PlaceApiService.GetMobileApiKeyForSync();
-            if (!string.IsNullOrWhiteSpace(mobileKey))
-                req.Headers.TryAddWithoutValidation("X-Mobile-Key", mobileKey);
+            var url = $"{origin.TrimEnd('/')}/api/plays/history?customerUserId={id}";
 
-            var res = await Http.SendAsync(req, ct).ConfigureAwait(false);
-            if (res.StatusCode == HttpStatusCode.Unauthorized)
+            try
             {
-                return new RemoteHistoryFetchResult(
-                    RemoteHistoryFetchStatus.Unauthorized,
-                    [],
-                    "401: trong Cài đặt nhập Khóa đồng bộ CMS trùng App:MobileApiKey (hoặc để trống khóa trên CMS).");
-            }
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                CmsTunnelHttp.ApplyTo(req);
+                var mobileKey = PlaceApiService.GetMobileApiKeyForSync();
+                if (!string.IsNullOrWhiteSpace(mobileKey))
+                    req.Headers.TryAddWithoutValidation("X-Mobile-Key", mobileKey);
 
-            if (!res.IsSuccessStatusCode)
+                var res = await Http.SendAsync(req, ct).ConfigureAwait(false);
+                if (res.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    return new RemoteHistoryFetchResult(
+                        RemoteHistoryFetchStatus.Unauthorized,
+                        [],
+                        "401: trong Cài đặt nhập Khóa đồng bộ CMS trùng App:MobileApiKey (hoặc để trống khóa trên CMS).");
+                }
+
+                if (!res.IsSuccessStatusCode)
+                {
+                    var body = await SafeReadAsync(res).ConfigureAwait(false);
+                    lastFailure = $"HTTP {(int)res.StatusCode}: {body}";
+                    continue;
+                }
+
+                var json = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                var rows = JsonSerializer.Deserialize<List<RemotePlayRow>>(json,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (rows is null)
+                {
+                    lastFailure = "Phản hồi JSON không đọc được.";
+                    continue;
+                }
+
+                var items = rows.Select(Map).OrderByDescending(x => x.Timestamp).ToList();
+                return new RemoteHistoryFetchResult(RemoteHistoryFetchStatus.Ok, items, null);
+            }
+            catch (Exception ex)
             {
-                var body = await SafeReadAsync(res).ConfigureAwait(false);
-                return new RemoteHistoryFetchResult(
-                    RemoteHistoryFetchStatus.Failed,
-                    [],
-                    $"HTTP {(int)res.StatusCode}: {body}");
+                Debug.WriteLine($"[RemotePlayHistory] {ex}");
+                lastFailure = ex.Message;
             }
-
-            var json = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            var rows = JsonSerializer.Deserialize<List<RemotePlayRow>>(json,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            if (rows is null)
-            {
-                return new RemoteHistoryFetchResult(
-                    RemoteHistoryFetchStatus.Failed,
-                    [],
-                    "Phản hồi JSON không đọc được.");
-            }
-
-            var items = rows.Select(Map).OrderByDescending(x => x.Timestamp).ToList();
-            return new RemoteHistoryFetchResult(RemoteHistoryFetchStatus.Ok, items, null);
         }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"[RemotePlayHistory] {ex}");
-            return new RemoteHistoryFetchResult(
-                RemoteHistoryFetchStatus.Failed,
-                [],
-                ex.Message);
-        }
+
+        return new RemoteHistoryFetchResult(
+            RemoteHistoryFetchStatus.Failed,
+            [],
+            string.IsNullOrWhiteSpace(lastFailure) ? "Không kết nối được CMS." : lastFailure);
     }
 
     private static async Task<string> SafeReadAsync(HttpResponseMessage res)

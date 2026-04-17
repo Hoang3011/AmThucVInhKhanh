@@ -251,37 +251,42 @@ public partial class MapPage : ContentPage
     private static string PickNarrationText(Place place, string? lang)
     {
         var normalizedLang = (lang ?? "vi").Trim().ToLowerInvariant();
-        return normalizedLang switch
+        var selected = normalizedLang switch
         {
             "en" => FirstNonEmpty(
                 place.EnglishAudioText,
-                place.VietnameseAudioText,
-                place.ChineseAudioText,
-                place.JapaneseAudioText,
                 place.Description,
                 place.Name),
             "zh" => FirstNonEmpty(
                 place.ChineseAudioText,
-                place.VietnameseAudioText,
-                place.EnglishAudioText,
-                place.JapaneseAudioText,
                 place.Description,
                 place.Name),
             "ja" => FirstNonEmpty(
                 place.JapaneseAudioText,
-                place.VietnameseAudioText,
-                place.EnglishAudioText,
-                place.ChineseAudioText,
                 place.Description,
                 place.Name),
             _ => FirstNonEmpty(
                 place.VietnameseAudioText,
-                place.EnglishAudioText,
-                place.ChineseAudioText,
-                place.JapaneseAudioText,
                 place.Description,
                 place.Name)
         };
+
+        // Nếu chỉ còn tên quán thì tạo câu thuyết minh ngắn theo ngôn ngữ đã chọn
+        // để tránh đọc lệch ngôn ngữ hoặc bị cụt khi POI thiếu audio text.
+        if (string.IsNullOrWhiteSpace(selected)
+            || string.Equals(selected.Trim(), place.Name?.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            var name = string.IsNullOrWhiteSpace(place.Name) ? "địa điểm này" : place.Name.Trim();
+            return normalizedLang switch
+            {
+                "en" => $"You are near {name}.",
+                "zh" => $"您现在在{name}附近。",
+                "ja" => $"ただいま{name}の近くです。",
+                _ => $"Bạn đang ở gần {name}."
+            };
+        }
+
+        return selected;
     }
 
     /// <summary>TTS ngắn khi bấm Chỉ đường — không phát file thuyết minh dài của POI.</summary>
@@ -477,13 +482,20 @@ public partial class MapPage : ContentPage
     {
         base.OnAppearing();
 
-        // Tự động đồng bộ log lượt phát thuyết minh ngay khi vào MapPage
-        await AutoSyncPlaybackLogsAsync();
+        try
+        {
+            // Tự động đồng bộ log lượt phát thuyết minh ngay khi vào MapPage
+            await AutoSyncPlaybackLogsAsync();
 
-        // Các lệnh cũ giữ nguyên (chạy nền không chặn UI)
-        _ = SafeLoadMapAsync();
-        _ = TryStartForegroundGpsListeningAsync();
-        _ = PlayWelcomeMessageAsync();
+            // Các lệnh cũ giữ nguyên (chạy nền không chặn UI)
+            _ = SafeLoadMapAsync();
+            _ = TryStartForegroundGpsListeningAsync();
+            _ = PlayWelcomeMessageAsync();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"MapPage.OnAppearing: {ex}");
+        }
     }
 
     private async Task SafeLoadMapAsync()
@@ -517,10 +529,21 @@ public partial class MapPage : ContentPage
 
     private async Task PlayWelcomeMessageAsync()
     {
-        // Đợi UI/map ổn định một chút để TTS không bị hụt câu khi vừa mở trang.
-        await Task.Delay(900);
-        _ = await NarrationQueueService.EnqueuePoiOrTtsAsync(-1, "vi",
-            "Xin chào, chào mừng bạn đến với phố ẩm thực Vĩnh Khánh.");
+        // Đồng bộ MainPage: không TTS chào tự động trên Android — tránh crash khi vào tab bản đồ.
+        if (OperatingSystem.IsAndroid())
+            return;
+
+        try
+        {
+            // Đợi UI/map ổn định một chút để TTS không bị hụt câu khi vừa mở trang.
+            await Task.Delay(900);
+            _ = await NarrationQueueService.EnqueuePoiOrTtsAsync(-1, "vi",
+                "Xin chào, chào mừng bạn đến với phố ẩm thực Vĩnh Khánh.");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"PlayWelcomeMessageAsync: {ex.Message}");
+        }
     }
 
     private async Task LoadMapAsync()

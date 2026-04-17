@@ -1,4 +1,5 @@
 using System.Net.Http;
+using System.Net;
 using System.Text.Json;
 using TourGuideApp2.Models;
 
@@ -28,10 +29,14 @@ public static class PlaceApiService
     };
 
     /// <summary>Timeout ngắn khi tải danh sách POI — tránh tab Bản đồ “đơ” hàng chục giây khi API/CMS không tới được (mạng khác).</summary>
-    private static readonly HttpClient PlacesFetchHttp = new()
+    private static readonly HttpClient PlacesFetchHttp = CreatePlacesFetchHttp();
+
+    private static HttpClient CreatePlacesFetchHttp()
     {
-        Timeout = TimeSpan.FromSeconds(4)
-    };
+        var c = new HttpClient { Timeout = TimeSpan.FromSeconds(4) };
+        CmsTunnelHttp.ApplyTo(c);
+        return c;
+    }
 
     private static readonly JsonSerializerOptions JsonDefault = new()
     {
@@ -50,17 +55,32 @@ public static class PlaceApiService
     /// </summary>
     public static string GetEffectiveApiUrl()
     {
-        // Ưu tiên URL người dùng nhập ở Cài đặt (đổi IP LAN/tunnel theo mạng thực tế).
-        var fromPrefs = (Preferences.Default.Get(PoiApiUrlPreferenceKey, string.Empty) ?? string.Empty).Trim();
-        if (!string.IsNullOrWhiteSpace(fromPrefs))
-            return fromPrefs;
-
-        // Fallback: URL đóng gói theo bản build.
-        return AppConfig.DefaultPoiApiUrl.Trim();
+        return GetApiUrlCandidatesForPlaces().FirstOrDefault() ?? string.Empty;
     }
 
     public static bool HasRemoteApiConfigured()
         => !string.IsNullOrWhiteSpace(GetEffectiveApiUrl());
+
+    public static IReadOnlyList<string> GetCmsSyncOrigins()
+    {
+        var list = new List<string>();
+        AddOrigin(list, GetConfiguredPublicCmsOrigin());
+        AddOrigin(list, GetCmsBaseUrl());
+        AddOrigin(list, AppConfig.GetCmsOrigin());
+
+        foreach (var raw in new[]
+                 {
+                     (Preferences.Default.Get(PoiApiUrlPreferenceKey, string.Empty) ?? string.Empty).Trim(),
+                     AppConfig.DefaultPoiApiUrl.Trim()
+                 })
+        {
+            if (string.IsNullOrWhiteSpace(raw) || !Uri.TryCreate(raw, UriKind.Absolute, out var u))
+                continue;
+            AddOrigin(list, $"{u.Scheme}://{u.Authority}");
+        }
+
+        return list;
+    }
 
     /// <summary>Gốc CMS (scheme + host) trùng với API POI — đăng nhập từ xa, đồng bộ lượt phát và lịch sử.</summary>
     public static string GetCmsBaseUrl()
@@ -82,11 +102,35 @@ public static class PlaceApiService
         return false;
     }
 
-    /// <summary>
-    /// Gốc CMS cho QR/Zalo, **đồng bộ lượt phát**, entitlement, đăng nhập từ xa khi cần host **4G** tới được.
-    /// Thứ tự: Cài đặt → <see cref="AppConfig.DefaultPublicCmsBaseUrl"/> → API POI nếu không phải localhost.
-    /// </summary>
-    public static string GetCmsBaseUrlForListenPayLinks()
+    private static bool IsLikelyLocalOnlyHost(string? host)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+            return true;
+        if (IsHostUnusableForPhoneQr(host))
+            return true;
+        if (host.EndsWith(".local", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (!IPAddress.TryParse(host, out var ip))
+            return false;
+
+        var bytes = ip.GetAddressBytes();
+        if (bytes.Length != 4)
+            return false;
+
+        // RFC1918 + link-local IPv4
+        if (bytes[0] == 10)
+            return true;
+        if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
+            return true;
+        if (bytes[0] == 192 && bytes[1] == 168)
+            return true;
+        if (bytes[0] == 169 && bytes[1] == 254)
+            return true;
+        return false;
+    }
+
+    private static string GetConfiguredPublicCmsOrigin()
     {
         var explicitBase = (Preferences.Default.Get(CmsListenPayPublicBaseUrlKey, "") ?? "").Trim().TrimEnd('/');
         if (!string.IsNullOrEmpty(explicitBase)
@@ -100,13 +144,26 @@ public static class PlaceApiService
             && !IsHostUnusableForPhoneQr(cfgU.Host))
             return $"{cfgU.Scheme}://{cfgU.Authority}";
 
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// Gốc CMS cho QR/Zalo, **đồng bộ lượt phát**, entitlement, đăng nhập từ xa khi cần host **4G** tới được.
+    /// Thứ tự: Cài đặt → <see cref="AppConfig.DefaultPublicCmsBaseUrl"/> → API POI nếu không phải localhost.
+    /// </summary>
+    public static string GetCmsBaseUrlForListenPayLinks()
+    {
+        var configuredPublic = GetConfiguredPublicCmsOrigin();
+        if (!string.IsNullOrEmpty(configuredPublic))
+            return configuredPublic;
+
         var cms = GetCmsBaseUrl().TrimEnd('/');
         if (!string.IsNullOrEmpty(cms)
             && Uri.TryCreate(cms, UriKind.Absolute, out var u)
             && !IsHostUnusableForPhoneQr(u.Host))
             return $"{u.Scheme}://{u.Authority}";
 
-        foreach (var raw in new[] { AppConfig.DefaultPoiApiUrl.Trim(), (Preferences.Default.Get(PoiApiUrlPreferenceKey, "") ?? "").Trim() })
+        foreach (var raw in new[] { (Preferences.Default.Get(PoiApiUrlPreferenceKey, "") ?? "").Trim(), AppConfig.DefaultPoiApiUrl.Trim() })
         {
             if (string.IsNullOrWhiteSpace(raw) || !Uri.TryCreate(raw, UriKind.Absolute, out var c))
                 continue;
@@ -116,6 +173,149 @@ public static class PlaceApiService
         }
 
         return cms;
+    }
+
+    /// <summary>
+    /// Danh sách gốc CMS để đồng bộ (ưu tiên public/tunnel, rồi LAN). App sẽ thử tuần tự đến khi thành công.
+    /// </summary>
+    public static IReadOnlyList<string> GetCmsBaseUrlCandidatesForSync()
+    {
+        var list = new List<string>();
+        AddOriginCandidate(list, GetConfiguredPublicCmsOrigin());
+        AddOriginCandidate(list, GetCmsBaseUrl());
+        AddOriginCandidate(list, AppConfig.GetCmsOrigin());
+        AddOriginCandidate(list, (Preferences.Default.Get(CmsListenPayPublicBaseUrlKey, "") ?? "").Trim().TrimEnd('/'));
+        AddOriginCandidate(list, ParseOriginFromApiUrl(Preferences.Default.Get(PoiApiUrlPreferenceKey, string.Empty) ?? string.Empty));
+        AddOriginCandidate(list, ParseOriginFromApiUrl(AppConfig.DefaultPoiApiUrl));
+        return list;
+    }
+
+    public static IReadOnlyList<string> GetApiUrlCandidatesForPlaces()
+    {
+        var list = new List<string>();
+
+        var fromPrefs = (Preferences.Default.Get(PoiApiUrlPreferenceKey, string.Empty) ?? string.Empty).Trim();
+        AddApiUrlCandidate(list, fromPrefs);
+
+        var configuredPublic = GetConfiguredPublicCmsOrigin();
+        if (!string.IsNullOrWhiteSpace(configuredPublic))
+            AddApiUrlCandidate(list, $"{configuredPublic}/api/places");
+
+        AddApiUrlCandidate(list, AppConfig.DefaultPoiApiUrl);
+        return list;
+    }
+
+    private static void AddApiUrlCandidate(List<string> list, string? rawApiUrl)
+    {
+        var raw = (rawApiUrl ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw))
+            return;
+        if (!Uri.TryCreate(raw, UriKind.Absolute, out var u))
+            return;
+        if (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps)
+            return;
+        if (IsHostUnusableForPhoneQr(u.Host))
+            return;
+
+        var normalized = u.ToString();
+        if (!list.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+            list.Add(normalized);
+    }
+
+    private static string ParseOriginFromApiUrl(string? rawApiUrl)
+    {
+        var raw = (rawApiUrl ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw) || !Uri.TryCreate(raw, UriKind.Absolute, out var u))
+            return string.Empty;
+        return $"{u.Scheme}://{u.Authority}";
+    }
+
+    private static void AddOriginCandidate(List<string> list, string? rawOrigin)
+    {
+        var raw = (rawOrigin ?? string.Empty).Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(raw))
+            return;
+        if (!Uri.TryCreate(raw, UriKind.Absolute, out var u))
+            return;
+        if (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps)
+            return;
+        if (IsHostUnusableForPhoneQr(u.Host))
+            return;
+        var origin = $"{u.Scheme}://{u.Authority}";
+        if (!list.Contains(origin, StringComparer.OrdinalIgnoreCase))
+            list.Add(origin);
+    }
+
+    private static void AddOrigin(List<string> list, string? raw)
+    {
+        var s = (raw ?? string.Empty).Trim().TrimEnd('/');
+        if (string.IsNullOrEmpty(s))
+            return;
+        if (!Uri.TryCreate(s, UriKind.Absolute, out var u))
+            return;
+        if (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps)
+            return;
+
+        var normalized = $"{u.Scheme}://{u.Authority}";
+        if (!list.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+            list.Add(normalized);
+    }
+
+    /// <summary>
+    /// Demo không cùng WiFi: một URL tunnel/public (vd. <c>https://xxx.ngrok-free.app</c>) hoặc URL đầy đủ …/api/places
+    /// → ghi Preferences API POI + gốc đồng bộ (Listen/Pay, lượt phát, entitlement…).
+    /// </summary>
+    public static bool TryApplyRemoteDemoBaseUrl(string? rawInput, out string message)
+    {
+        message = string.Empty;
+        var trimmed = (rawInput ?? string.Empty).Trim().TrimEnd('/');
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            message = "Dán URL gốc tunnel (https://…) hoặc …/api/places.";
+            return false;
+        }
+
+        const string placesSuffix = "/api/places";
+        string apiPlaces;
+        string origin;
+
+        if (trimmed.EndsWith(placesSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            apiPlaces = trimmed;
+            var without = trimmed[..^placesSuffix.Length].TrimEnd('/');
+            if (!Uri.TryCreate(without, UriKind.Absolute, out var u0)
+                || (u0.Scheme != Uri.UriSchemeHttp && u0.Scheme != Uri.UriSchemeHttps)
+                || IsHostUnusableForPhoneQr(u0.Host))
+            {
+                message = "URL gốc (trước /api/places) không hợp lệ.";
+                return false;
+            }
+
+            origin = $"{u0.Scheme}://{u0.Authority}".TrimEnd('/');
+        }
+        else
+        {
+            if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var u)
+                || (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps))
+            {
+                message = "URL phải bắt đầu bằng http:// hoặc https://.";
+                return false;
+            }
+
+            if (IsHostUnusableForPhoneQr(u.Host))
+            {
+                message = "Không dùng localhost — dùng URL tunnel (ngrok, Cloudflare Tunnel…).";
+                return false;
+            }
+
+            origin = $"{u.Scheme}://{u.Authority}".TrimEnd('/');
+            apiPlaces = $"{origin}/api/places";
+        }
+
+        Preferences.Default.Set(PoiApiUrlPreferenceKey, apiPlaces);
+        Preferences.Default.Set(CmsListenPayPublicBaseUrlKey, origin);
+        message = "Đã gán API POI và gốc đồng bộ (tunnel / public).";
+        return true;
     }
 
     /// <summary>URL trang trả phí demo (mở được trong Zalo/trình duyệt). Rỗng nếu chưa có gốc CMS.</summary>
@@ -129,43 +329,51 @@ public static class PlaceApiService
 
     public static async Task<List<Place>?> TryGetRemotePlacesAsync()
     {
-        var apiUrl = GetEffectiveApiUrl();
-        if (string.IsNullOrWhiteSpace(apiUrl))
+        var apiUrls = GetApiUrlCandidatesForPlaces();
+        if (apiUrls.Count == 0)
             return null;
 
-        try
+        foreach (var apiUrl in apiUrls)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
-            var apiKey = Preferences.Default.Get(PoiApiKeyPreferenceKey, string.Empty)?.Trim();
-            if (string.IsNullOrWhiteSpace(apiKey))
-                apiKey = AppConfig.DefaultPoiApiKey.Trim();
-            if (!string.IsNullOrWhiteSpace(apiKey))
+            try
             {
-                request.Headers.TryAddWithoutValidation("apikey", apiKey);
-                request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {apiKey}");
+                using var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
+                CmsTunnelHttp.ApplyTo(request);
+                var apiKey = Preferences.Default.Get(PoiApiKeyPreferenceKey, string.Empty)?.Trim();
+                if (string.IsNullOrWhiteSpace(apiKey))
+                    apiKey = AppConfig.DefaultPoiApiKey.Trim();
+                if (!string.IsNullOrWhiteSpace(apiKey))
+                {
+                    request.Headers.TryAddWithoutValidation("apikey", apiKey);
+                    request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {apiKey}");
+                }
+
+                using var response = await PlacesFetchHttp.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
+                    continue;
+
+                var json = await response.Content.ReadAsStringAsync();
+                var apiItems = ParseApiItems(json);
+                if (apiItems.Count == 0)
+                    continue;
+                TryLearnPublicSyncOriginFromApiItems(apiItems);
+
+                var mapped = apiItems
+                    .Select(MapApiPoiToPlace)
+                    .Where(x => x is not null)
+                    .Cast<Place>()
+                    .ToList();
+
+                if (mapped.Count > 0)
+                    return mapped;
             }
-
-            using var response = await PlacesFetchHttp.SendAsync(request);
-            if (!response.IsSuccessStatusCode)
-                return null;
-
-            var json = await response.Content.ReadAsStringAsync();
-            var apiItems = ParseApiItems(json);
-            if (apiItems.Count == 0)
-                return null;
-
-            var mapped = apiItems
-                .Select(MapApiPoiToPlace)
-                .Where(x => x is not null)
-                .Cast<Place>()
-                .ToList();
-
-            return mapped.Count > 0 ? mapped : null;
+            catch
+            {
+                // thử URL kế tiếp
+            }
         }
-        catch
-        {
-            return null;
-        }
+
+        return null;
     }
 
     public static async Task<List<Place>> GetPlacesAsync()
@@ -205,6 +413,42 @@ public static class PlaceApiService
         catch
         {
             return [];
+        }
+    }
+
+    private static void TryLearnPublicSyncOriginFromApiItems(List<PoiApiItem> apiItems)
+    {
+        try
+        {
+            foreach (var item in apiItems)
+            {
+                var payload = (item.QrPayload ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(payload))
+                    continue;
+                if (!Uri.TryCreate(payload, UriKind.Absolute, out var u))
+                    continue;
+                if ((u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps) || IsHostUnusableForPhoneQr(u.Host))
+                    continue;
+                if (!u.AbsolutePath.Contains("/Listen/Pay", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var origin = $"{u.Scheme}://{u.Authority}";
+                Preferences.Default.Set(CmsListenPayPublicBaseUrlKey, origin);
+
+                var savedPoiApi = (Preferences.Default.Get(PoiApiUrlPreferenceKey, string.Empty) ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(savedPoiApi)
+                    || !Uri.TryCreate(savedPoiApi, UriKind.Absolute, out var savedApiUri)
+                    || IsLikelyLocalOnlyHost(savedApiUri.Host))
+                {
+                    Preferences.Default.Set(PoiApiUrlPreferenceKey, $"{origin}/api/places");
+                }
+
+                return;
+            }
+        }
+        catch
+        {
+            // học URL nền thất bại thì bỏ qua, không ảnh hưởng tải POI.
         }
     }
 

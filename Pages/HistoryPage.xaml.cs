@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Maui.ApplicationModel;
 using TourGuideApp2.Models;
 using TourGuideApp2.Services;
@@ -20,6 +21,32 @@ public partial class HistoryPage : ContentPage
     }
 
     private async Task LoadHistoryAsync()
+    {
+        try
+        {
+            await LoadHistoryCoreAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"HistoryPage.LoadHistoryAsync: {ex}");
+            try
+            {
+                await MainThread.InvokeOnMainThreadAsync(() =>
+                {
+                    syncStatusLabel.Text = "Không tải được lịch sử (lỗi tạm thời). Thử lại tab Lịch sử.";
+                    syncStatusLabel.TextColor = Colors.DimGray;
+                    emptyStateLabel.IsVisible = true;
+                    historyList.ItemsSource = Array.Empty<HistoryEntryViewItem>();
+                });
+            }
+            catch
+            {
+                // bỏ qua
+            }
+        }
+    }
+
+    private async Task LoadHistoryCoreAsync()
     {
         // === Tự động đồng bộ log đang chờ lên CMS (nếu CMS đang bật) ===
         await PlaySyncService.FlushPendingAsync().ConfigureAwait(false);
@@ -76,7 +103,7 @@ public partial class HistoryPage : ContentPage
                 .Select(x => new HistoryEntryViewItem
                 {
                     PlaceName = x.PlaceName,
-                    SourceLine = $"Nguồn: {x.Source} | Ngôn ngữ: {x.Language.ToUpperInvariant()}",
+                    SourceLine = $"Nguồn: {x.Source} | Ngôn ngữ: {(x.Language ?? "").ToUpperInvariant()}",
                     TimeLine = $"Thời gian: {x.Timestamp:dd/MM/yyyy HH:mm:ss} | Độ dài: {FormatDurationShort(x.DurationSeconds)}"
                 })
                 .ToList();
@@ -85,6 +112,7 @@ public partial class HistoryPage : ContentPage
             emptyStateLabel.IsVisible = _items.Count == 0;
         });
     }
+
 
     private static (string Text, Color Color) BuildSyncStatusText(RemoteHistoryFetchResult fetch)
     {

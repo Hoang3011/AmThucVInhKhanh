@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Maui.Storage;
 
 namespace TourGuideApp2.Services;
 
@@ -7,9 +8,19 @@ namespace TourGuideApp2.Services;
 public static class PlaySyncService
 {
     /// <summary>4G / mạng chậm: timeout dài hơn; lượt vẫn lưu file chờ nếu lỗi.</summary>
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(45) };
+    private static readonly HttpClient Http = CreateHttp();
+
+    private static HttpClient CreateHttp()
+    {
+        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
+        CmsTunnelHttp.ApplyTo(h);
+        return h;
+    }
     private static readonly SemaphoreSlim Gate = new(1, 1);
-    private static readonly string PendingFilePath = Path.Combine(FileSystem.AppDataDirectory, "play-sync-pending.json");
+    private static string? _pendingFilePath;
+
+    /// <summary>Lazy: tránh gọi <see cref="FileSystem.AppDataDirectory"/> khi static init chạy trước MAUI platform.</summary>
+    private static string PendingFilePath => _pendingFilePath ??= Path.Combine(FileSystem.AppDataDirectory, "play-sync-pending.json");
 
     public static void Enqueue(string placeName, string source, string language, double? durationSeconds, DateTime timestampLocal)
     {
@@ -31,11 +42,11 @@ public static class PlaySyncService
                 if (pending.Count == 0)
                     return;
 
-                var origin = ResolveSyncOrigin();
-                if (string.IsNullOrWhiteSpace(origin))
+                var origins = ResolveSyncOrigins();
+                if (origins.Count == 0)
                     return;
 
-                await DrainQueueAsync(origin, pending, cancellationToken).ConfigureAwait(false);
+                await DrainQueueAsync(origins, pending, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -52,22 +63,18 @@ public static class PlaySyncService
         }
     }
 
-    private static string? ResolveSyncOrigin()
+    private static IReadOnlyList<string> ResolveSyncOrigins()
     {
-        var o = PlaceApiService.GetCmsBaseUrlForListenPayLinks();
-        if (!string.IsNullOrWhiteSpace(o))
-            return o.TrimEnd('/');
-        o = PlaceApiService.GetCmsBaseUrl();
-        return string.IsNullOrWhiteSpace(o) ? null : o.TrimEnd('/');
+        return PlaceApiService.GetCmsBaseUrlCandidatesForSync();
     }
 
     /// <summary>Gửi tuần tự từ đầu; gặp lỗi thì giữ từ phần tử đó trở đi.</summary>
-    private static async Task DrainQueueAsync(string origin, List<PlayLogDto> pending, CancellationToken cancellationToken)
+    private static async Task DrainQueueAsync(IReadOnlyList<string> origins, List<PlayLogDto> pending, CancellationToken cancellationToken)
     {
         for (var i = 0; i < pending.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!await TrySendOneAsync(origin, pending[i]).ConfigureAwait(false))
+            if (!await TrySendOneWithFallbackAsync(origins, pending[i]).ConfigureAwait(false))
             {
                 await WritePendingAsync(pending.Skip(i).ToList()).ConfigureAwait(false);
                 return;
@@ -96,15 +103,15 @@ public static class PlaySyncService
             var pending = await ReadPendingAsync().ConfigureAwait(false);
             pending.Add(current);
 
-            var origin = ResolveSyncOrigin();
+            var origins = ResolveSyncOrigins();
 
             // === THAY ĐỔI Ở ĐÂY: Luôn lưu local trước ===
             await WritePendingAsync(pending).ConfigureAwait(false);
 
             // Chỉ thử gửi nếu có địa chỉ CMS
-            if (!string.IsNullOrWhiteSpace(origin))
+            if (origins.Count > 0)
             {
-                await DrainQueueAsync(origin, pending, CancellationToken.None).ConfigureAwait(false);
+                await DrainQueueAsync(origins, pending, CancellationToken.None).ConfigureAwait(false);
             }
             else
             {
@@ -123,6 +130,7 @@ public static class PlaySyncService
         {
             var url = $"{origin.TrimEnd('/')}/api/plays/log";
             using var req = new HttpRequestMessage(HttpMethod.Post, url);
+            CmsTunnelHttp.ApplyTo(req);
             req.Content = JsonContent.Create(body);
             var mobileKey = PlaceApiService.GetMobileApiKeyForSync();
             if (!string.IsNullOrWhiteSpace(mobileKey))
@@ -136,6 +144,17 @@ public static class PlaySyncService
         {
             return false;
         }
+    }
+
+    private static async Task<bool> TrySendOneWithFallbackAsync(IReadOnlyList<string> origins, PlayLogDto body)
+    {
+        foreach (var origin in origins)
+        {
+            if (await TrySendOneAsync(origin, body).ConfigureAwait(false))
+                return true;
+        }
+
+        return false;
     }
 
     private static async Task<List<PlayLogDto>> ReadPendingAsync()

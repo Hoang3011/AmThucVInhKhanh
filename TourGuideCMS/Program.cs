@@ -1,12 +1,24 @@
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.HttpOverrides;
 using QRCoder;
+using TourGuideCMS;
 using TourGuideCMS.Services;
 using Microsoft.AspNetCore.Localization;
 using System.Globalization;
 using System.Linq;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor
+        | ForwardedHeaders.XForwardedProto
+        | ForwardedHeaders.XForwardedHost;
+    // Tunnel (ngrok, Cloudflare) — tin header reverse proxy trong môi trường dev/demo.
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
@@ -22,6 +34,8 @@ builder.Services.AddSingleton<CustomerAccountRepository>();
 builder.Services.AddSingleton<CmsIdentityRepository>();
 
 var app = builder.Build();
+
+app.UseForwardedHeaders();
 
 var localizationOptions = new RequestLocalizationOptions
 {
@@ -40,38 +54,79 @@ app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
 
-static bool IsHostUnusableForPhoneQr(string? host)
+// Ping đơn giản để app tự kiểm tra đúng host/port trong LAN.
+app.MapGet("/api/ping", () => Results.Json(new
 {
-    if (string.IsNullOrEmpty(host)) return true;
-    if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return true;
-    if (host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)) return true;
-    if (host.Equals("::1", StringComparison.OrdinalIgnoreCase)) return true;
-    if (host.Equals("[::1]", StringComparison.OrdinalIgnoreCase)) return true;
-    // Emulator → máy dev; điện thoại thật quét QR không mở được.
-    if (host.Equals("10.0.2.2", StringComparison.OrdinalIgnoreCase)) return true;
-    return false;
+    ok = true,
+    utc = DateTime.UtcNow.ToString("O")
+}));
+
+static string? FindApkPath(IWebHostEnvironment env)
+{
+    var www = env.WebRootPath ?? string.Empty;
+    var canonicalDownloads = string.IsNullOrWhiteSpace(www)
+        ? null
+        : Path.Combine(www, "downloads", "AmThucVinhKhanh.apk");
+
+    // Luôn ưu tiên file upload chuẩn — tránh QR tải nhầm APK debug trong bin (ABI/khác build → máy khác văng).
+    if (!string.IsNullOrWhiteSpace(canonicalDownloads) && System.IO.File.Exists(canonicalDownloads))
+        return canonicalDownloads;
+
+    var candidates = new List<string>();
+    if (!string.IsNullOrWhiteSpace(www))
+    {
+        var downloadsDir = Path.Combine(www, "downloads");
+        if (Directory.Exists(downloadsDir))
+            candidates.AddRange(Directory.GetFiles(downloadsDir, "*.apk", SearchOption.TopDirectoryOnly));
+    }
+
+    // Fallback: nếu chưa upload file chuẩn, vẫn cho phép lấy APK build mới nhất để QR tải được ngay.
+    var root = env.ContentRootPath ?? string.Empty;
+    if (!string.IsNullOrWhiteSpace(root))
+    {
+        var releaseDir = Path.GetFullPath(Path.Combine(root, "..", "bin", "Release", "net10.0-android"));
+        if (Directory.Exists(releaseDir))
+            candidates.AddRange(Directory.GetFiles(releaseDir, "*.apk", SearchOption.AllDirectories));
+    }
+
+    var existing = candidates
+        .Where(System.IO.File.Exists)
+        .Select(p => new FileInfo(p))
+        .OrderByDescending(fi => fi.LastWriteTimeUtc)
+        .ThenByDescending(fi => fi.Length)
+        .Select(fi => fi.FullName)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    return existing.FirstOrDefault();
 }
 
-static string SiteRootForLinks(HttpContext ctx, IConfiguration config)
+static string? BuildLocalApkDownloadUrl(HttpContext http, IConfiguration config, IWebHostEnvironment env)
 {
-    var configured = (config["App:PublicBaseUrl"] ?? "").Trim().TrimEnd('/');
-    if (!string.IsNullOrEmpty(configured))
-        return configured;
+    var apkPath = FindApkPath(env);
+    if (string.IsNullOrWhiteSpace(apkPath) || !System.IO.File.Exists(apkPath))
+        return null;
 
-    var requestHost = ctx.Request.Host.Host;
-    if (!IsHostUnusableForPhoneQr(requestHost))
-        return $"{ctx.Request.Scheme}://{ctx.Request.Host.Value}{ctx.Request.PathBase}".TrimEnd('/');
-
-    // Trình duyệt mở bằng localhost nhưng QR/Zalo cần URL LAN hoặc domain — cấu hình App:DevelopmentPublicBaseUrl (Development).
-    var devPublic = (config["App:DevelopmentPublicBaseUrl"] ?? "").Trim().TrimEnd('/');
-    if (!string.IsNullOrEmpty(devPublic))
-        return devPublic;
-
-    return $"{ctx.Request.Scheme}://{ctx.Request.Host.Value}{ctx.Request.PathBase}".TrimEnd('/');
+    var version = System.IO.File.GetLastWriteTimeUtc(apkPath).Ticks;
+    return $"{PublicSiteUrls.SiteRootForLinks(http, config)}/downloads/AmThucVinhKhanh.apk?v={version}";
 }
 
-static string ListenPayPayload(HttpContext ctx, IConfiguration config, int placeId)
-    => $"{SiteRootForLinks(ctx, config)}/Listen/Pay?placeId={placeId}";
+static string? ResolveInstallTargetUrl(HttpContext http, IConfiguration config, IWebHostEnvironment env)
+{
+    // 1) Link public cấu hình sẵn (store/APK public)
+    var direct = (config["App:AppDownloadUrl"] ?? "").Trim();
+    if (!string.IsNullOrEmpty(direct)
+        && Uri.TryCreate(direct, UriKind.Absolute, out var u)
+        && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps))
+        return direct;
+
+    // 2) APK local trong CMS
+    var localApkUrl = BuildLocalApkDownloadUrl(http, config, env);
+    if (!string.IsNullOrWhiteSpace(localApkUrl))
+        return localApkUrl;
+
+    return null;
+}
 
 // API JSON cho app MAUI (PostgREST-style): cấu hình URL trong app trỏ tới https://.../api/places
 app.MapGet("/api/places", async (HttpContext http, PlaceRepository repo, IConfiguration config) =>
@@ -95,7 +150,7 @@ app.MapGet("/api/places", async (HttpContext http, PlaceRepository repo, IConfig
         japaneseAudioText = r.JapaneseAudioText,
         mapUrl = r.MapUrl,
         premiumPriceDemo = r.PremiumPriceDemo,
-        qrPayload = ListenPayPayload(http, config, r.Id)
+        qrPayload = PublicSiteUrls.ListenPayPayload(http, config, r.Id)
     });
     return Results.Json(payload, new System.Text.Json.JsonSerializerOptions
     {
@@ -111,12 +166,143 @@ app.MapGet("/qr/places/{id:int}", async (HttpContext http, int id, PlaceReposito
     if (place is null)
         return Results.NotFound();
 
-    var content = ListenPayPayload(http, config, place.Id);
+    var content = PublicSiteUrls.ListenPayPayload(http, config, place.Id);
     using var gen = new QRCodeGenerator();
     using var data = gen.CreateQrCode(content, QRCodeGenerator.ECCLevel.Q);
     var png = new PngByteQRCode(data);
     var bytes = png.GetGraphic(8);
     return Results.File(bytes, "image/png");
+});
+
+// APK local (LAN): đặt file tại wwwroot/downloads/AmThucVinhKhanh.apk để điện thoại quét QR là bật prompt tải/cài.
+app.MapGet("/downloads/AmThucVinhKhanh.apk", (HttpContext http, IWebHostEnvironment env) =>
+{
+    var apkPath = FindApkPath(env);
+    if (string.IsNullOrWhiteSpace(apkPath) || !System.IO.File.Exists(apkPath))
+        return Results.NotFound("Thiếu file APK. Đặt file .apk vào TourGuideCMS/wwwroot/downloads/ hoặc build Android APK.");
+
+    // Bắt buộc no-cache để máy quét QR luôn tải đúng APK mới vừa upload/build.
+    http.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate, max-age=0";
+    http.Response.Headers.Pragma = "no-cache";
+    http.Response.Headers.Expires = "0";
+
+    // Dùng octet-stream + filename để nhiều webview buộc tải file thay vì render trắng.
+    return Results.File(apkPath, "application/octet-stream", "AmThucVinhKhanh.apk");
+});
+
+// Route trung gian cho QR tải app: nếu có target cài đặt thì redirect thẳng.
+app.MapGet("/install/launch", (HttpContext http, IConfiguration config, IWebHostEnvironment env) =>
+{
+    var target = ResolveInstallTargetUrl(http, config, env);
+    if (string.IsNullOrWhiteSpace(target))
+        return Results.Redirect("/Install?fromQr=1");
+
+    var encodedTarget = Uri.EscapeDataString(target);
+    var fallback = Uri.EscapeDataString($"{PublicSiteUrls.SiteRootForLinks(http, config)}/Install?fromQr=1");
+    var noScheme = target.Replace("https://", "", StringComparison.OrdinalIgnoreCase)
+                         .Replace("http://", "", StringComparison.OrdinalIgnoreCase);
+    var intentScheme = target.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "https" : "http";
+    var intentUrl = $"intent://{noScheme}#Intent;scheme={intentScheme};package=com.android.chrome;S.browser_fallback_url={fallback};end";
+    var encodedIntent = Uri.EscapeDataString(intentUrl);
+    var setupDeepLink = $"amthucvinhkhanh://setup?base={Uri.EscapeDataString(PublicSiteUrls.SiteRootForLinks(http, config))}";
+    var encodedSetup = Uri.EscapeDataString(setupDeepLink);
+
+    var html = $@"
+<!doctype html>
+<html>
+<head>
+  <meta charset=""utf-8"" />
+  <meta name=""viewport"" content=""width=device-width, initial-scale=1"" />
+  <title>Đang mở cài đặt ứng dụng...</title>
+</head>
+<body style=""font-family: Arial, sans-serif; padding: 16px;"">
+  <p>Đang mở cài đặt ứng dụng...</p>
+  <p>Nếu không tự chuyển, dùng các nút bên dưới:</p>
+  <p><a href=""{target}"">Tải / cài đặt app</a></p>
+  <p><a href=""{intentUrl}"">Mở bằng Chrome</a></p>
+  <p><a href=""{setupDeepLink}"">Mở app và tự cấu hình đồng bộ</a></p>
+  <script>
+    (function () {{
+      var ua = navigator.userAgent || '';
+      var isAndroid = /Android/i.test(ua);
+      if (isAndroid) {{
+        try {{ window.location.href = decodeURIComponent('{encodedIntent}'); }} catch(e) {{}}
+      }}
+      setTimeout(function() {{
+        try {{ window.location.href = decodeURIComponent('{encodedTarget}'); }} catch(e) {{}}
+      }}, 500);
+
+      // Sau khi cài xong, nhiều máy quay lại trình duyệt thay vì tự mở app.
+      // Thử gọi deeplink setup định kỳ để app nhận URL CMS mà không cần màn Cài đặt.
+      var tries = 0;
+      var timer = setInterval(function() {{
+        tries++;
+        if (tries > 45) {{ clearInterval(timer); return; }}
+        try {{ window.location.href = decodeURIComponent('{encodedSetup}'); }} catch(e) {{}}
+      }}, 2000);
+    }})();
+  </script>
+</body>
+</html>";
+    return Results.Content(html, "text/html; charset=utf-8");
+});
+
+// Upload nhanh APK từ trình duyệt để bật ngay QR cài app cho thiết bị khác.
+app.MapPost("/api/install/upload-apk", async (HttpRequest req, IWebHostEnvironment env) =>
+{
+    if (!req.HasFormContentType)
+        return Results.BadRequest("Yêu cầu multipart/form-data.");
+
+    var form = await req.ReadFormAsync();
+    var file = form.Files["apkFile"] ?? form.Files.FirstOrDefault(f => f.FileName.EndsWith(".apk", StringComparison.OrdinalIgnoreCase));
+    if (file is null || file.Length <= 0)
+        return Results.Redirect("/Install?uploadError=1");
+
+    var ext = Path.GetExtension(file.FileName);
+    if (!".apk".Equals(ext, StringComparison.OrdinalIgnoreCase))
+        return Results.Redirect("/Install?uploadError=1");
+
+    var downloadsDir = Path.Combine(env.WebRootPath ?? "", "downloads");
+    Directory.CreateDirectory(downloadsDir);
+    var targetPath = Path.Combine(downloadsDir, "AmThucVinhKhanh.apk");
+
+    await using (var fs = System.IO.File.Create(targetPath))
+    {
+        await file.CopyToAsync(fs);
+    }
+
+    return Results.Redirect("/Install?uploaded=1");
+});
+
+// QR PNG tải app: mở route /install/launch để nhảy thẳng luồng cài đặt nếu có APK/link.
+app.MapGet("/qr/app", (HttpContext http, IConfiguration config, IWebHostEnvironment env) =>
+{
+    http.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate, max-age=0";
+    http.Response.Headers.Pragma = "no-cache";
+
+    var content = PublicSiteUrls.QrAppInstallLaunchUrl(http, config);
+
+    using var gen = new QRCodeGenerator();
+    using var data = gen.CreateQrCode(content, QRCodeGenerator.ECCLevel.Q);
+    var png = new PngByteQRCode(data);
+    var bytes = png.GetGraphic(8);
+    return Results.File(bytes, "image/png");
+});
+
+// Chẩn đoán nhanh: xem CMS đang phục vụ APK nào cho QR.
+app.MapGet("/api/install/apk-info", (IWebHostEnvironment env) =>
+{
+    var apkPath = FindApkPath(env);
+    if (string.IsNullOrWhiteSpace(apkPath) || !System.IO.File.Exists(apkPath))
+        return Results.NotFound(new { message = "Không tìm thấy APK." });
+
+    var fi = new FileInfo(apkPath);
+    return Results.Json(new
+    {
+        path = fi.FullName,
+        bytes = fi.Length,
+        lastWriteUtc = fi.LastWriteTimeUtc.ToString("O")
+    });
 });
 
 static bool MobileKeyOk(HttpRequest req, IConfiguration config)

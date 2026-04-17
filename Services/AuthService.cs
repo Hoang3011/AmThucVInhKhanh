@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -10,6 +11,13 @@ namespace TourGuideApp2.Services;
 
 public static class AuthService
 {
+    private static HttpClient CreateHttpClient(TimeSpan timeout)
+    {
+        var c = new HttpClient { Timeout = timeout };
+        CmsTunnelHttp.ApplyTo(c);
+        return c;
+    }
+
     private const string SessionUserIdKey = "SessionUserId";
     private const string SessionUserNameKey = "SessionUserName";
     private const string SessionUserAccountKey = "SessionUserAccount";
@@ -48,7 +56,7 @@ CREATE TABLE IF NOT EXISTS UserAccount (
         if (password.Length < 6)
             return (false, "Mật khẩu tối thiểu 6 ký tự.");
 
-        if (!string.IsNullOrWhiteSpace(PlaceApiService.GetCmsBaseUrlForListenPayLinks()))
+        if (GetAuthBaseUrls().Count > 0)
         {
             var remote = await RegisterRemoteAsync(fullName, phoneOrEmail, password);
             if (remote.Success || remote.ServerReachable)
@@ -71,7 +79,7 @@ CREATE TABLE IF NOT EXISTS UserAccount (
         if (string.IsNullOrWhiteSpace(phoneOrEmail) || string.IsNullOrWhiteSpace(password))
             return (false, "Vui lòng nhập tài khoản và mật khẩu.", null);
 
-        if (!string.IsNullOrWhiteSpace(PlaceApiService.GetCmsBaseUrlForListenPayLinks()))
+        if (GetAuthBaseUrls().Count > 0)
         {
             var remote = await LoginRemoteAsync(phoneOrEmail, password);
             if (remote.Success)
@@ -81,7 +89,9 @@ CREATE TABLE IF NOT EXISTS UserAccount (
             {
                 var local = await LoginLocalAsync(phoneOrEmail, password);
                 if (!local.Success)
-                    return (false, $"Không kết nối máy chủ. {local.Message}".Trim(), null);
+                    return (false,
+                        "Không kết nối máy chủ hoặc URL sai. Kiểm tra Wi-Fi cùng mạng PC chạy CMS và URL API trong Cài đặt (4G không vào được IP LAN). Tài khoản chỉ có trên web nên chưa đăng nhập cục bộ được.",
+                        null);
 
                 var remote2 = await LoginRemoteAsync(phoneOrEmail, password);
                 if (remote2.Success)
@@ -222,61 +232,226 @@ LIMIT 1;";
     private static async Task<(bool Success, bool ServerReachable, string Message)> RegisterRemoteAsync(
         string fullName, string phoneOrEmail, string password)
     {
-        try
-        {
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
-            var url = $"{PlaceApiService.GetCmsBaseUrlForListenPayLinks().TrimEnd('/')}/api/customers/register";
-            var res = await client.PostAsJsonAsync(url, new { fullName, phoneOrEmail, password });
-            if (res.IsSuccessStatusCode)
-            {
-                await UpsertLocalAccountAsync(fullName, phoneOrEmail, password);
-                return (true, true, "Đăng ký thành công.");
-            }
+        var endpointUrls = GetAuthEndpointUrls("register");
+        if (endpointUrls.Count == 0)
+            return (false, false, "Chưa cấu hình URL máy chủ.");
 
-            var msg = await TryReadApiMessageAsync(res);
-            return (false, true, string.IsNullOrWhiteSpace(msg) ? "Đăng ký thất bại." : msg);
-        }
-        catch (Exception ex)
+        string lastConnectError = "Không kết nối máy chủ.";
+        foreach (var url in endpointUrls)
         {
-            return (false, false, $"Không kết nối máy chủ ({ex.Message}).");
+            try
+            {
+                if (!await IsServerReachableForAuthAsync(url))
+                    continue;
+
+                using var client = CreateHttpClient(TimeSpan.FromSeconds(15));
+                var res = await client.PostAsJsonAsync(url, new { fullName, phoneOrEmail, password });
+                if (res.IsSuccessStatusCode)
+                {
+                    await UpsertLocalAccountAsync(fullName, phoneOrEmail, password);
+                    return (true, true, "Đăng ký thành công.");
+                }
+
+                // URL này có server nhưng sai endpoint, thử URL kế tiếp.
+                if (res.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed)
+                    continue;
+
+                var msg = await TryReadApiMessageAsync(res);
+                return (false, true, string.IsNullOrWhiteSpace(msg) ? "Đăng ký thất bại." : msg);
+            }
+            catch (Exception ex)
+            {
+                lastConnectError = $"Không kết nối máy chủ ({ex.Message}).";
+            }
         }
+
+        return (false, false, lastConnectError);
     }
 
     private static async Task<(bool Success, bool ServerReachable, string Message, UserAccount? User)> LoginRemoteAsync(
         string phoneOrEmail, string password)
     {
+        var endpointUrls = GetAuthEndpointUrls("login");
+        if (endpointUrls.Count == 0)
+            return (false, false, "Chưa cấu hình URL máy chủ.", null);
+
+        string lastConnectError = "Không kết nối máy chủ.";
+        foreach (var url in endpointUrls)
+        {
+            try
+            {
+                if (!await IsServerReachableForAuthAsync(url))
+                    continue;
+
+                using var client = CreateHttpClient(TimeSpan.FromSeconds(15));
+                var res = await client.PostAsJsonAsync(url, new { phoneOrEmail, password });
+                if (!res.IsSuccessStatusCode)
+                {
+                    // URL này có server nhưng sai endpoint, thử URL kế tiếp.
+                    if (res.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed)
+                        continue;
+
+                    var msg = await TryReadApiMessageAsync(res);
+                    return (false, true, string.IsNullOrWhiteSpace(msg) ? "Đăng nhập thất bại." : msg, null);
+                }
+
+                var dto = await res.Content.ReadFromJsonAsync<RemoteAuthDto>(
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (dto is null)
+                    return (false, true, "Phản hồi máy chủ không hợp lệ.", null);
+
+                var created = DateTime.TryParse(dto.CreatedAt, out var c) ? c : DateTime.Now;
+                var user = new UserAccount
+                {
+                    Id = dto.Id,
+                    FullName = dto.FullName ?? string.Empty,
+                    PhoneOrEmail = dto.PhoneOrEmail ?? string.Empty,
+                    CreatedAt = created
+                };
+                await UpsertLocalAccountAsync(user.FullName, user.PhoneOrEmail, password, created);
+                SetSession(user, true);
+                CustomerRouteSyncService.ScheduleUploadAfterLocalSave();
+                return (true, true, "Đăng nhập thành công.", user);
+            }
+            catch (Exception ex)
+            {
+                lastConnectError = $"Không kết nối máy chủ ({ex.Message}).";
+            }
+        }
+
+        return (false, false, lastConnectError, null);
+    }
+
+    private static async Task<bool> IsServerReachableForAuthAsync(string endpointUrl)
+    {
+        if (!Uri.TryCreate(endpointUrl, UriKind.Absolute, out var u))
+            return false;
+
+        var origin = $"{u.Scheme}://{u.Authority}".TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(origin))
+            return false;
+
         try
         {
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
-            var url = $"{PlaceApiService.GetCmsBaseUrlForListenPayLinks().TrimEnd('/')}/api/customers/login";
-            var res = await client.PostAsJsonAsync(url, new { phoneOrEmail, password });
-            if (!res.IsSuccessStatusCode)
-            {
-                var msg = await TryReadApiMessageAsync(res);
-                return (false, true, string.IsNullOrWhiteSpace(msg) ? "Đăng nhập thất bại." : msg, null);
-            }
-
-            var dto = await res.Content.ReadFromJsonAsync<RemoteAuthDto>(
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            if (dto is null)
-                return (false, true, "Phản hồi máy chủ không hợp lệ.", null);
-
-            var created = DateTime.TryParse(dto.CreatedAt, out var c) ? c : DateTime.Now;
-            var user = new UserAccount
-            {
-                Id = dto.Id,
-                FullName = dto.FullName ?? string.Empty,
-                PhoneOrEmail = dto.PhoneOrEmail ?? string.Empty,
-                CreatedAt = created
-            };
-            await UpsertLocalAccountAsync(user.FullName, user.PhoneOrEmail, password, created);
-            SetSession(user, true);
-            CustomerRouteSyncService.ScheduleUploadAfterLocalSave();
-            return (true, true, "Đăng nhập thành công.", user);
+            using var client = CreateHttpClient(TimeSpan.FromSeconds(3));
+            // Ưu tiên /api/ping (bản mới), fallback /api/places (bản cũ).
+            var ping = await client.GetAsync($"{origin}/api/ping");
+            if (ping.IsSuccessStatusCode)
+                return true;
         }
-        catch (Exception ex)
+        catch
         {
-            return (false, false, $"Không kết nối máy chủ ({ex.Message}).", null);
+            // ignore
+        }
+
+        try
+        {
+            using var client = CreateHttpClient(TimeSpan.FromSeconds(3));
+            var places = await client.GetAsync($"{origin}/api/places");
+            return places.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static List<string> GetAuthEndpointUrls(string action)
+    {
+        var list = new List<string>();
+        var actionPart = action.Trim().ToLowerInvariant();
+        if (actionPart != "login" && actionPart != "register")
+            return list;
+
+        foreach (var b in GetAuthBaseUrls())
+        {
+            AddEndpointCandidate(list, $"{b}/api/customers/{actionPart}");
+            AddEndpointCandidate(list, $"{b}/customers/{actionPart}");
+        }
+
+        // Nếu API POI nằm sau một prefix (vd /vk/api/places), giữ prefix đó cho auth.
+        var effectiveApi = (PlaceApiService.GetEffectiveApiUrl() ?? string.Empty).Trim();
+        if (Uri.TryCreate(effectiveApi, UriKind.Absolute, out var u))
+        {
+            var path = u.AbsolutePath.TrimEnd('/');
+            var marker = "/api/places";
+            var idx = path.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (idx >= 0)
+            {
+                var prefix = path[..idx].TrimEnd('/');
+                AddEndpointCandidate(list, $"{u.Scheme}://{u.Authority}{prefix}/api/customers/{actionPart}");
+            }
+        }
+
+        return list;
+    }
+
+    private static void AddEndpointCandidate(List<string> list, string? raw)
+    {
+        var s = (raw ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s))
+            return;
+        if (!Uri.TryCreate(s, UriKind.Absolute, out var u))
+            return;
+        if (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps)
+            return;
+        var normalized = u.ToString().TrimEnd('/');
+        if (!list.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+            list.Add(normalized);
+    }
+
+    private static List<string> GetAuthBaseUrls()
+    {
+        var list = new List<string>();
+        foreach (var origin in PlaceApiService.GetCmsBaseUrlCandidatesForSync())
+            AddBaseUrlCandidate(list, origin);
+        AddBaseUrlCandidate(list, PlaceApiService.GetCmsBaseUrl());
+        AddBaseUrlCandidate(list, PlaceApiService.GetCmsBaseUrlForListenPayLinks());
+        AddBaseUrlCandidate(list, AppConfig.GetCmsOrigin());
+
+        var apiUrl = PlaceApiService.GetEffectiveApiUrl();
+        if (Uri.TryCreate(apiUrl, UriKind.Absolute, out var api))
+            AddHostPortFallbacks(list, api.Host);
+
+        return list;
+    }
+
+    private static void AddBaseUrlCandidate(List<string> list, string? raw)
+    {
+        var s = (raw ?? string.Empty).Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(s))
+            return;
+        if (!Uri.TryCreate(s, UriKind.Absolute, out var u))
+            return;
+        if (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps)
+            return;
+        var normalized = $"{u.Scheme}://{u.Authority}";
+        if (!list.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+            list.Add(normalized);
+
+        AddHostPortFallbacks(list, u.Host);
+    }
+
+    private static void AddHostPortFallbacks(List<string> list, string? host)
+    {
+        var h = (host ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(h))
+            return;
+
+        // Fallback cổng phổ biến của ASP.NET trong môi trường dev/demo.
+        foreach (var c in new[]
+                 {
+                     $"http://{h}:5095",
+                     $"http://{h}:5000",
+                     $"http://{h}:5001",
+                     $"https://{h}:5001",
+                     $"https://{h}:5096"
+                 })
+        {
+            if (!Uri.TryCreate(c, UriKind.Absolute, out _))
+                continue;
+            if (!list.Contains(c, StringComparer.OrdinalIgnoreCase))
+                list.Add(c);
         }
     }
 

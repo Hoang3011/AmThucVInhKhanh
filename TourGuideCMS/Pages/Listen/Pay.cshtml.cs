@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using TourGuideCMS;
 using TourGuideCMS.Services;
 
 namespace TourGuideCMS.Pages.Listen;
@@ -10,11 +11,13 @@ public class PayModel : PageModel
 {
     private readonly PlaceRepository _places;
     private readonly CustomerAccountRepository _customers;
+    private readonly IConfiguration _config;
 
-    public PayModel(PlaceRepository places, CustomerAccountRepository customers)
+    public PayModel(PlaceRepository places, CustomerAccountRepository customers, IConfiguration config)
     {
         _places = places;
         _customers = customers;
+        _config = config;
     }
 
     [BindProperty(SupportsGet = true)]
@@ -35,6 +38,8 @@ public class PayModel : PageModel
     public string? ResultMessage { get; set; }
     public bool ResultOk { get; set; }
 
+    public string QrAppImageSrc { get; private set; } = "";
+
     public async Task<IActionResult> OnGetAsync()
     {
         if (PlaceId <= 0)
@@ -50,11 +55,14 @@ public class PayModel : PageModel
 
         PlaceName = place.Name;
         PriceVnd = place.PremiumPriceDemo;
+        QrAppImageSrc = PublicSiteUrls.QrAppImageSrc(HttpContext, _config);
         return Page();
     }
 
     public async Task<IActionResult> OnPostAsync()
     {
+        QrAppImageSrc = PublicSiteUrls.QrAppImageSrc(HttpContext, _config);
+
         if (PlaceId <= 0)
         {
             ResultOk = false;

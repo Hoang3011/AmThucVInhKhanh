@@ -9,16 +9,17 @@ namespace TourGuideApp2.Services;
 /// <summary>Gọi API CMS: kiểm tra đã trả phí demo chưa + ghi nhận thanh toán demo (một lần / POI / thiết bị).</summary>
 public static class PremiumPaymentService
 {
-    private static readonly HttpClient Http = new()
-    {
-        Timeout = TimeSpan.FromSeconds(15)
-    };
+    private static readonly HttpClient Http = CreateHttp(15);
 
     /// <summary>GET entitlement nhẹ hơn (timeout ngắn) — dùng khi bấm nghe POI liên tục.</summary>
-    private static readonly HttpClient EntitlementHttp = new()
+    private static readonly HttpClient EntitlementHttp = CreateHttp(12);
+
+    private static HttpClient CreateHttp(int timeoutSeconds)
     {
-        Timeout = TimeSpan.FromSeconds(12)
-    };
+        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(timeoutSeconds) };
+        CmsTunnelHttp.ApplyTo(h);
+        return h;
+    }
 
     private static readonly object EntitlementTrueCacheLock = new();
     private static readonly Dictionary<string, DateTime> EntitlementTrueUntilUtc = new();
@@ -145,34 +146,40 @@ public static class PremiumPaymentService
     /// </summary>
     private static async Task<bool?> QueryServerEntitlementAsync(int placeId, CancellationToken cancellationToken)
     {
-        var baseUrl = PlaceApiService.GetCmsBaseUrlForListenPayLinks();
-        if (string.IsNullOrWhiteSpace(baseUrl))
+        var origins = PlaceApiService.GetCmsBaseUrlCandidatesForSync();
+        if (origins.Count == 0)
             return null;
 
         var device = Uri.EscapeDataString(DeviceInstallIdService.GetOrCreate());
         var cust = AuthService.GetCustomerIdForServerSync();
         var custPart = cust.HasValue && cust.Value > 0 ? $"&customerUserId={cust.Value}" : "";
-        var url = $"{baseUrl.TrimEnd('/')}/api/premium/entitlement?placeId={placeId}&deviceInstallId={device}{custPart}";
-        using var req = new HttpRequestMessage(HttpMethod.Get, url);
-        var key = PlaceApiService.GetMobileApiKeyForSync();
-        if (!string.IsNullOrWhiteSpace(key))
-            req.Headers.TryAddWithoutValidation("X-Mobile-Key", key);
+        foreach (var origin in origins)
+        {
+            var url = $"{origin.TrimEnd('/')}/api/premium/entitlement?placeId={placeId}&deviceInstallId={device}{custPart}";
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            CmsTunnelHttp.ApplyTo(req);
+            var key = PlaceApiService.GetMobileApiKeyForSync();
+            if (!string.IsNullOrWhiteSpace(key))
+                req.Headers.TryAddWithoutValidation("X-Mobile-Key", key);
 
-        try
-        {
-            using var res = await EntitlementHttp.SendAsync(req, cancellationToken).ConfigureAwait(false);
-            if (!res.IsSuccessStatusCode)
-                return null;
-            await using var stream = await res.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-            using var doc = await JsonDocument.ParseAsync(stream, default, cancellationToken).ConfigureAwait(false);
-            var unlocked = doc.RootElement.TryGetProperty("unlocked", out var u) &&
-                           u.ValueKind is JsonValueKind.True;
-            return unlocked;
+            try
+            {
+                using var res = await EntitlementHttp.SendAsync(req, cancellationToken).ConfigureAwait(false);
+                if (!res.IsSuccessStatusCode)
+                    continue;
+                await using var stream = await res.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+                using var doc = await JsonDocument.ParseAsync(stream, default, cancellationToken).ConfigureAwait(false);
+                var unlocked = doc.RootElement.TryGetProperty("unlocked", out var u) &&
+                               u.ValueKind is JsonValueKind.True;
+                return unlocked;
+            }
+            catch
+            {
+                // thử origin kế tiếp
+            }
         }
-        catch
-        {
-            return null;
-        }
+
+        return null;
     }
 
     private static void MaybeScheduleSilentEntitlementRefresh(int placeId)
@@ -237,15 +244,9 @@ public static class PremiumPaymentService
         int placeId,
         CancellationToken cancellationToken = default)
     {
-        var baseUrl = PlaceApiService.GetCmsBaseUrlForListenPayLinks();
-        if (string.IsNullOrWhiteSpace(baseUrl))
+        var origins = PlaceApiService.GetCmsBaseUrlCandidatesForSync();
+        if (origins.Count == 0)
             return (false, "Chưa cấu hình máy chủ CMS.", false);
-
-        var url = $"{baseUrl.TrimEnd('/')}/api/premium/pay-demo";
-        using var req = new HttpRequestMessage(HttpMethod.Post, url);
-        var key = PlaceApiService.GetMobileApiKeyForSync();
-        if (!string.IsNullOrWhiteSpace(key))
-            req.Headers.TryAddWithoutValidation("X-Mobile-Key", key);
 
         var body = new
         {
@@ -253,30 +254,46 @@ public static class PremiumPaymentService
             deviceInstallId = DeviceInstallIdService.GetOrCreate(),
             customerUserId = AuthService.GetCustomerIdForServerSync()
         };
-        req.Content = JsonContent.Create(body);
+        string? lastError = null;
 
-        try
+        foreach (var origin in origins)
         {
-            using var res = await Http.SendAsync(req, cancellationToken).ConfigureAwait(false);
-            var txt = await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(txt) ? "{}" : txt);
-            var root = doc.RootElement;
-            var ok = root.TryGetProperty("ok", out var okEl) && okEl.ValueKind == JsonValueKind.True;
-            var msg = root.TryGetProperty("message", out var mEl) && mEl.ValueKind == JsonValueKind.String
-                ? mEl.GetString() ?? ""
-                : (res.IsSuccessStatusCode ? "Xong." : $"HTTP {(int)res.StatusCode}");
-            var already = root.TryGetProperty("alreadyUnlocked", out var aEl) && aEl.ValueKind == JsonValueKind.True;
-            if (ok || already)
+            try
             {
-                SavePersistentUnlock(placeId);
-                TouchMemoryTrueCache(BuildEntitlementCacheKey(placeId));
-            }
+                var url = $"{origin.TrimEnd('/')}/api/premium/pay-demo";
+                using var req = new HttpRequestMessage(HttpMethod.Post, url);
+                CmsTunnelHttp.ApplyTo(req);
+                var key = PlaceApiService.GetMobileApiKeyForSync();
+                if (!string.IsNullOrWhiteSpace(key))
+                    req.Headers.TryAddWithoutValidation("X-Mobile-Key", key);
+                req.Content = JsonContent.Create(body);
 
-            return (ok || already, msg, already);
+                using var res = await Http.SendAsync(req, cancellationToken).ConfigureAwait(false);
+                var txt = await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(txt) ? "{}" : txt);
+                var root = doc.RootElement;
+                var ok = root.TryGetProperty("ok", out var okEl) && okEl.ValueKind == JsonValueKind.True;
+                var msg = root.TryGetProperty("message", out var mEl) && mEl.ValueKind == JsonValueKind.String
+                    ? mEl.GetString() ?? ""
+                    : (res.IsSuccessStatusCode ? "Xong." : $"HTTP {(int)res.StatusCode}");
+                var already = root.TryGetProperty("alreadyUnlocked", out var aEl) && aEl.ValueKind == JsonValueKind.True;
+                if (ok || already)
+                {
+                    SavePersistentUnlock(placeId);
+                    TouchMemoryTrueCache(BuildEntitlementCacheKey(placeId));
+                }
+
+                if (res.IsSuccessStatusCode || already)
+                    return (ok || already, msg, already);
+
+                lastError = msg;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex.Message;
+            }
         }
-        catch (Exception ex)
-        {
-            return (false, ex.Message, false);
-        }
+
+        return (false, lastError ?? "Không kết nối được CMS.", false);
     }
 }

@@ -29,9 +29,32 @@ public partial class SettingsPage : ContentPage
         statusLabel.Text = string.Empty;
     }
 
+    private void OnApplyTunnelOneUrlClicked(object? sender, EventArgs e)
+    {
+        var raw = (listenPayPublicBaseEntry.Text ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(raw))
+        {
+            var api = (poiApiUrlEntry.Text ?? string.Empty).Trim();
+            const string suffix = "/api/places";
+            if (api.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                raw = api[..^suffix.Length].TrimEnd('/');
+        }
+
+        if (PlaceApiService.TryApplyRemoteDemoBaseUrl(raw, out var msg))
+        {
+            statusLabel.Text = msg;
+            LoadUi();
+        }
+        else
+            statusLabel.Text = msg;
+    }
+
     private void OnSaveClicked(object? sender, EventArgs e)
     {
         var url = (poiApiUrlEntry.Text ?? string.Empty).Trim();
+        var listenBase = (listenPayPublicBaseEntry.Text ?? string.Empty).Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(url) && !string.IsNullOrWhiteSpace(listenBase))
+            url = $"{listenBase}/api/places";
         Preferences.Default.Set(PlaceApiService.PoiApiUrlPreferenceKey, url);
 
         var key = (cmsMobileKeyEntry.Text ?? string.Empty).Trim();
@@ -40,7 +63,6 @@ public partial class SettingsPage : ContentPage
         else
             Preferences.Default.Set(PlaceApiService.CmsMobileApiKeyPreferenceKey, key);
 
-        var listenBase = (listenPayPublicBaseEntry.Text ?? string.Empty).Trim().TrimEnd('/');
         if (string.IsNullOrEmpty(listenBase))
             Preferences.Default.Remove(PlaceApiService.CmsListenPayPublicBaseUrlKey);
         else

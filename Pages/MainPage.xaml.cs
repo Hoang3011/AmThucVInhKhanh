@@ -1,3 +1,4 @@
+using System;
 using TourGuideApp2.Services;
 
 namespace TourGuideApp2;
@@ -16,8 +17,15 @@ public partial class MainPage : ContentPage
     protected override void OnAppearing()
     {
         base.OnAppearing();
-        RefreshAuthUi();
-        _ = PlayAppWelcomeOnceAsync();
+        try
+        {
+            RefreshAuthUi();
+            _ = PlayAppWelcomeOnceAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"MainPage.OnAppearing: {ex}");
+        }
     }
 
     private static async Task PlayAppWelcomeOnceAsync()
@@ -26,6 +34,12 @@ public partial class MainPage : ContentPage
             return;
 
         _hasPlayedAppWelcome = true;
+
+        // Android: bỏ TTS chào tự động — nhiều máy crash native khi mở app (cài qua QR). UI vẫn có dòng chữ chào.
+        // Thuyết minh POI / map / chỉ đường vẫn dùng NarrationQueue khi người dùng thao tác.
+        if (OperatingSystem.IsAndroid())
+            return;
+
         try
         {
             await Task.Delay(350);
@@ -34,9 +48,9 @@ public partial class MainPage : ContentPage
                 "vi",
                 "Xin chào, chào mừng bạn đến với phố ẩm thực Vĩnh Khánh.");
         }
-        catch
+        catch (Exception ex)
         {
-            // Không chặn màn hình nếu TTS lỗi.
+            System.Diagnostics.Debug.WriteLine($"PlayAppWelcomeOnceAsync: {ex.Message}");
         }
     }
 

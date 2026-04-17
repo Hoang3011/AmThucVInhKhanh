@@ -1,4 +1,4 @@
-﻿@page
+@page
 @model IndexModel
 @{
     ViewData["Title"] = "Trang chủ CMS";
@@ -22,7 +22,7 @@
                 <h5 class="card-title">API cho app MAUI</h5>
                 <p class="small mb-1">Endpoint đọc POI (JSON):</p>
                 <code class="d-block mb-2 p-2 bg-light">GET @Request.Scheme://@Request.Host/api/places</code>
-                <p class="small text-muted mb-0">Trong app: cài <strong>Preferences</strong> URL API = địa chỉ trên (máy thật: IP LAN máy chạy web). File DB: <code class="small">@Model.DatabasePath</code></p>
+                <p class="small text-muted mb-0">Trong app: Cài đặt → URL API (LAN hoặc tunnel). Ngoài LAN: tunnel + <code>App:PublicBaseUrl</code> trên CMS; trong app bấm <strong>Gán tunnel (1 URL)</strong>. File DB: <code class="small">@Model.DatabasePath</code></p>
             </div>
         </div>
     </div>
@@ -32,22 +32,18 @@
     <a class="btn btn-link" asp-page="/Reports">Lịch sử / Tour — gợi ý</a>
 </div>
 
-<!-- Ô mới: QR Code tải app (đặt ngay dưới phần lịch sử) -->
+<!-- QR tải app: cùng URL với PublicSiteUrls.AppDownloadQrContent → /install/launch (hoặc App:AppDownloadUrl) -->
 <div class="mt-4">
     <div class="card">
         <div class="card-body text-center py-4">
             <h5 class="card-title mb-3">Tải app MAUI</h5>
-            
-            <!-- === CHỖ NÀY ĐỂ BẠN CHÈN HÌNH QR === -->
-            <!-- Thay src bằng đường dẫn thực tế của file QR (ví dụ: /images/qr-maui-app.png) -->
-            <img src="/Resources/QR.png"
-                 alt="QR Code tải ứng dụng MAUI"
+            <img src="@Model.QrAppImageSrc"
+                 alt="QR Code tải ứng dụng"
                  class="img-fluid shadow-sm"
                  style="max-width: 260px; border: 1px solid #dee2e6; border-radius: 12px;">
-            
             <p class="small text-muted mt-3 mb-0">
-                Quét mã QR bằng điện thoại để tải ngay ứng dụng<br>
-                (Hoặc mở link API phía trên trong app)
+                Quét bằng điện thoại để mở link cài app (<code>/install/launch</code>).<br />
+                Nhiều máy: cùng Wi‑Fi, trong app → <strong>Cài đặt</strong> → dán cùng URL <code>GET …/api/places</code> như ô phía trên.
             </p>
         </div>
     </div>

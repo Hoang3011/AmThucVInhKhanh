@@ -53,7 +53,11 @@ public static class NarrationQueueService
         };
 
         if (!Jobs.Writer.TryWrite(job))
-            tcs.SetException(new InvalidOperationException("Narration queue không ghi được."));
+        {
+            // Không fault task — tránh unobserved exception trên máy chậm / nhiều tab.
+            tcs.TrySetResult(null);
+            return tcs.Task;
+        }
 
         return tcs.Task;
     }
@@ -96,7 +100,9 @@ public static class NarrationQueueService
             }
             catch (Exception ex)
             {
-                job.Completion.TrySetException(ex);
+                // Không fault task await — tránh crash khi TTS/audio lỗi trên một số máy (task không được observe).
+                System.Diagnostics.Debug.WriteLine($"NarrationQueue: {ex.Message}");
+                job.Completion.TrySetResult(null);
             }
         }
     }
@@ -236,6 +242,10 @@ public static class NarrationQueueService
         return null;
     }
 
+    private static bool LocaleLanguageStartsWith(Locale l, string prefix) =>
+        !string.IsNullOrEmpty(l.Language) && l.Language.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Android: TTS/GetLocales an toàn hơn khi gọi trên luồng UI.</summary>
     private static async Task<bool> SpeakAsync(string text, string lang, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(text)) return false;
@@ -243,21 +253,42 @@ public static class NarrationQueueService
 
         try
         {
+            return await MainThread.InvokeOnMainThreadAsync(() => SpeakCoreOnUiAsync(text, lang, cancellationToken))
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"SpeakAsync (marshal UI): {ex.Message}");
+            return false;
+        }
+    }
+
+    private static async Task<bool> SpeakCoreOnUiAsync(string text, string lang, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        try
+        {
             var locales = await TextToSpeech.Default.GetLocalesAsync().ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
+            var localeList = locales == null ? Array.Empty<Locale>() : locales.ToArray();
             var langLower = (lang ?? string.Empty).Trim().ToLowerInvariant();
             var isVi = IsVietnameseLanguage(langLower);
 
             Locale? pick = langLower switch
             {
-                "en" => locales.FirstOrDefault(l => l.Language.StartsWith("en", StringComparison.OrdinalIgnoreCase)),
-                "zh" => locales.FirstOrDefault(l => l.Language.StartsWith("zh", StringComparison.OrdinalIgnoreCase)),
-                "ja" => locales.FirstOrDefault(l => l.Language.StartsWith("ja", StringComparison.OrdinalIgnoreCase)),
-                _ => locales.FirstOrDefault(l => l.Language.StartsWith("vi", StringComparison.OrdinalIgnoreCase))
+                "en" => localeList.FirstOrDefault(l => LocaleLanguageStartsWith(l, "en")),
+                "zh" => localeList.FirstOrDefault(l => LocaleLanguageStartsWith(l, "zh")),
+                "ja" => localeList.FirstOrDefault(l => LocaleLanguageStartsWith(l, "ja")),
+                _ => localeList.FirstOrDefault(l => LocaleLanguageStartsWith(l, "vi"))
             };
 
             if (!isVi)
-                pick ??= locales.FirstOrDefault();
+                pick ??= localeList.FirstOrDefault();
 
             await TextToSpeech.Default.SpeakAsync(text, new SpeechOptions
             {

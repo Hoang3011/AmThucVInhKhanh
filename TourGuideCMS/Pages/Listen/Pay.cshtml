@@ -17,10 +17,14 @@
     else
     {
         <p>Giá hiện tại (demo): <strong>@Model.PriceVnd.ToString("N0") đ</strong></p>
-        <p class="small text-muted mb-3">
+        <p class="small text-muted mb-2">
             Thanh toán trên trang này yêu cầu <strong>tài khoản khách đã tạo trên app</strong>.
-            Nếu chưa có tài khoản, vui lòng quét QR để tải app, tạo tài khoản rồi quay lại đăng nhập để trả phí.
+            Nếu chưa có tài khoản, quét QR bên dưới (cùng mã với trang chủ CMS) để tải app / xem hướng dẫn, tạo tài khoản rồi đăng nhập tại đây để trả phí.
         </p>
+        <div class="text-center mb-3">
+            <img src="@Model.QrAppImageSrc" alt="QR tải app" class="img-fluid" style="max-width: 180px; border-radius: 10px; border: 1px solid #dee2e6;" />
+            <p class="small text-muted mt-2 mb-0">Hoặc mở <a href="/Install">/Install</a> trên điện thoại.</p>
+        </div>
 
         @if (!string.IsNullOrEmpty(Model.ResultMessage))
         {
