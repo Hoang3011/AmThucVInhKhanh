@@ -201,20 +201,21 @@ public partial class MapPage : ContentPage
         if (remote.Count == 0)
             return;
 
-        var remoteMissingNarration = remote.Any(p => !HasAnyNarration(p));
-        if (!remoteMissingNarration)
-            return;
-
         var local = await PlaceLocalRepository.TryLoadAsync();
         if (local.Places.Count == 0)
             return;
 
+        var localById = local.Places
+            .Where(p => p is not null && p.Id > 0)
+            .GroupBy(p => p.Id)
+            .ToDictionary(g => g.Key, g => g.First());
+
         foreach (var r in remote)
         {
-            if (HasAnyNarration(r))
-                continue;
-
-            var candidate = local.Places.FirstOrDefault(l => IsLikelySamePoi(r, l));
+            Place? candidate = null;
+            if (r.Id > 0)
+                localById.TryGetValue(r.Id, out candidate);
+            candidate ??= local.Places.FirstOrDefault(l => IsLikelySamePoi(r, l));
             if (candidate is null)
                 continue;
 
@@ -251,42 +252,13 @@ public partial class MapPage : ContentPage
     private static string PickNarrationText(Place place, string? lang)
     {
         var normalizedLang = (lang ?? "vi").Trim().ToLowerInvariant();
-        var selected = normalizedLang switch
+        return normalizedLang switch
         {
-            "en" => FirstNonEmpty(
-                place.EnglishAudioText,
-                place.Description,
-                place.Name),
-            "zh" => FirstNonEmpty(
-                place.ChineseAudioText,
-                place.Description,
-                place.Name),
-            "ja" => FirstNonEmpty(
-                place.JapaneseAudioText,
-                place.Description,
-                place.Name),
-            _ => FirstNonEmpty(
-                place.VietnameseAudioText,
-                place.Description,
-                place.Name)
+            "en" => FirstNonEmpty(place.EnglishAudioText),
+            "zh" => FirstNonEmpty(place.ChineseAudioText),
+            "ja" => FirstNonEmpty(place.JapaneseAudioText),
+            _ => FirstNonEmpty(place.VietnameseAudioText)
         };
-
-        // Nếu chỉ còn tên quán thì tạo câu thuyết minh ngắn theo ngôn ngữ đã chọn
-        // để tránh đọc lệch ngôn ngữ hoặc bị cụt khi POI thiếu audio text.
-        if (string.IsNullOrWhiteSpace(selected)
-            || string.Equals(selected.Trim(), place.Name?.Trim(), StringComparison.OrdinalIgnoreCase))
-        {
-            var name = string.IsNullOrWhiteSpace(place.Name) ? "địa điểm này" : place.Name.Trim();
-            return normalizedLang switch
-            {
-                "en" => $"You are near {name}.",
-                "zh" => $"您现在在{name}附近。",
-                "ja" => $"ただいま{name}の近くです。",
-                _ => $"Bạn đang ở gần {name}."
-            };
-        }
-
-        return selected;
     }
 
     /// <summary>TTS ngắn khi bấm Chỉ đường — không phát file thuyết minh dài của POI.</summary>
@@ -491,6 +463,8 @@ public partial class MapPage : ContentPage
             _ = SafeLoadMapAsync();
             _ = TryStartForegroundGpsListeningAsync();
             _ = PlayWelcomeMessageAsync();
+
+            DeviceHeartbeatService.StartMapTabSession();
         }
         catch (Exception ex)
         {
@@ -525,6 +499,7 @@ public partial class MapPage : ContentPage
     {
         // Không dừng GPS khi chuyển tab — vẫn theo dõi vị trí (kể cả khi gập app, nếu đã cấp quyền nền).
         base.OnDisappearing();
+        _ = DeviceHeartbeatService.NotifyMapTabLeftAsync();
     }
 
     private async Task PlayWelcomeMessageAsync()
@@ -1571,7 +1546,8 @@ for (var i = 0; i < pois.length; i++) {{
 
         try
         {
-            var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(poiIndex, _selectedLanguage, text, ct);
+            var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(
+                poiIndex, _selectedLanguage, text, ct, place.Id > 0 ? place.Id : null);
             UpdateLastPlayedLabel(place.Name, "BusStop");
             PlaySyncService.Enqueue(place.Name, "BusStop", _selectedLanguage, durationSeconds, DateTime.Now);
         }
@@ -1823,7 +1799,8 @@ for (var i = 0; i < pois.length; i++) {{
             CancelBusStopSpeech();
             try
             {
-                var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(poiIndex, _selectedLanguage, text);
+                var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(
+                    poiIndex, _selectedLanguage, text, default, place.Id > 0 ? place.Id : null);
                 UpdateLastPlayedLabel(place.Name, "QR");
                 PlaySyncService.Enqueue(place.Name, "QR", _selectedLanguage, durationSeconds, DateTime.Now);
             }
@@ -2198,14 +2175,7 @@ for (var i = 0; i < pois.length; i++) {{
                 return;
             }
 
-            var text = _selectedLanguage switch
-            {
-                "vi" => nearestPlace.VietnameseAudioText ?? nearestPlace.EnglishAudioText ?? nearestPlace.ChineseAudioText ?? nearestPlace.JapaneseAudioText ?? "",
-                "en" => nearestPlace.EnglishAudioText ?? nearestPlace.VietnameseAudioText ?? nearestPlace.ChineseAudioText ?? nearestPlace.JapaneseAudioText ?? "",
-                "zh" => nearestPlace.ChineseAudioText ?? nearestPlace.VietnameseAudioText ?? nearestPlace.EnglishAudioText ?? nearestPlace.JapaneseAudioText ?? "",
-                "ja" => nearestPlace.JapaneseAudioText ?? nearestPlace.VietnameseAudioText ?? nearestPlace.EnglishAudioText ?? nearestPlace.ChineseAudioText ?? "",
-                _ => nearestPlace.VietnameseAudioText ?? ""
-            };
+            var text = PickNarrationText(nearestPlace, _selectedLanguage);
 
             if (string.IsNullOrWhiteSpace(text))
             {
@@ -2255,7 +2225,8 @@ for (var i = 0; i < pois.length; i++) {{
         var token = speakCts.Token;
         try
         {
-            var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(speakPoiIndex, _selectedLanguage, textToSpeak, token);
+            var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(
+                speakPoiIndex, _selectedLanguage, textToSpeak, token, speakPlace.Id > 0 ? speakPlace.Id : null);
             RegisterAutoGeoPlaybackCompleted(speakPoiIndex);
             UpdateLastPlayedLabel(speakPlace.Name, "AutoGeo");
             UpdateCooldownLabel(speakPoiIndex);
@@ -2763,18 +2734,10 @@ for (var i = 0; i < pois.length; i++) {{
         }
     }
 
-    async Task<bool> EnsurePoiListenPaidAsync(Place place)
+    static Task<bool> EnsurePoiListenPaidAsync(Place place)
     {
-        // Luôn hỏi server entitlement theo PlaceId để tránh lệch dữ liệu giá local/cache.
-        // Nếu POI miễn phí trên server thì entitlement vẫn trả true.
-        if (await PremiumPaymentService.CheckEntitlementAsync(place.Id))
-            return true;
-
-        await DisplayAlertAsync(
-            "Chưa mở khóa thuyết minh",
-            "Vui lòng thanh toán để được sử dụng dịch vụ ở địa điểm này.",
-            "OK");
-        return false;
+        _ = place;
+        return Task.FromResult(true);
     }
 
     async void MapView_Navigating(object sender, WebNavigatingEventArgs e)
@@ -2943,7 +2906,8 @@ for (var i = 0; i < pois.length; i++) {{
 
             CancelProximitySpeech();
             CancelBusStopSpeech();
-            var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(poiIndex, speakLang, text ?? "");
+            var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(
+                poiIndex, speakLang, text ?? "", default, place.Id > 0 ? place.Id : null);
             UpdateLastPlayedLabel(place.Name, "Map");
             PlaySyncService.Enqueue(place.Name, "Map", speakLang, durationSeconds, DateTime.Now);
         }

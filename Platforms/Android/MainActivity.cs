@@ -1,4 +1,4 @@
-﻿using Android.App;
+using Android.App;
 using Android.Content;
 using Android.Content.PM;
 using Android.OS;
@@ -25,6 +25,22 @@ namespace TourGuideApp2
             base.OnNewIntent(intent);
             if (intent is not null)
                 TryApplySetupIntent(intent);
+        }
+
+        protected override void OnStop()
+        {
+            // Khi activity không còn hiển thị (về Home / vuốt tắt app). Bỏ qua xoay màn hình.
+            try
+            {
+                if (!IsChangingConfigurations)
+                    _ = DeviceHeartbeatService.NotifyMapTabLeftAsync();
+            }
+            catch
+            {
+                // bỏ qua
+            }
+
+            base.OnStop();
         }
 
         private static void TryApplySetupIntent(Intent? intent)

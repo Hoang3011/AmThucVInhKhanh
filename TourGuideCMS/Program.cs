@@ -61,53 +61,13 @@ app.MapGet("/api/ping", () => Results.Json(new
     utc = DateTime.UtcNow.ToString("O")
 }));
 
-static string? FindApkPath(IWebHostEnvironment env)
-{
-    var www = env.WebRootPath ?? string.Empty;
-    var canonicalDownloads = string.IsNullOrWhiteSpace(www)
-        ? null
-        : Path.Combine(www, "downloads", "AmThucVinhKhanh.apk");
-
-    // Luôn ưu tiên file upload chuẩn — tránh QR tải nhầm APK debug trong bin (ABI/khác build → máy khác văng).
-    if (!string.IsNullOrWhiteSpace(canonicalDownloads) && System.IO.File.Exists(canonicalDownloads))
-        return canonicalDownloads;
-
-    var candidates = new List<string>();
-    if (!string.IsNullOrWhiteSpace(www))
-    {
-        var downloadsDir = Path.Combine(www, "downloads");
-        if (Directory.Exists(downloadsDir))
-            candidates.AddRange(Directory.GetFiles(downloadsDir, "*.apk", SearchOption.TopDirectoryOnly));
-    }
-
-    // Fallback: nếu chưa upload file chuẩn, vẫn cho phép lấy APK build mới nhất để QR tải được ngay.
-    var root = env.ContentRootPath ?? string.Empty;
-    if (!string.IsNullOrWhiteSpace(root))
-    {
-        var releaseDir = Path.GetFullPath(Path.Combine(root, "..", "bin", "Release", "net10.0-android"));
-        if (Directory.Exists(releaseDir))
-            candidates.AddRange(Directory.GetFiles(releaseDir, "*.apk", SearchOption.AllDirectories));
-    }
-
-    var existing = candidates
-        .Where(System.IO.File.Exists)
-        .Select(p => new FileInfo(p))
-        .OrderByDescending(fi => fi.LastWriteTimeUtc)
-        .ThenByDescending(fi => fi.Length)
-        .Select(fi => fi.FullName)
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .ToList();
-
-    return existing.FirstOrDefault();
-}
-
 static string? BuildLocalApkDownloadUrl(HttpContext http, IConfiguration config, IWebHostEnvironment env)
 {
-    var apkPath = FindApkPath(env);
+    var apkPath = ApkLocator.FindPreferredApkPath(env);
     if (string.IsNullOrWhiteSpace(apkPath) || !System.IO.File.Exists(apkPath))
         return null;
 
-    var version = System.IO.File.GetLastWriteTimeUtc(apkPath).Ticks;
+    var version = ApkLocator.CacheBusterForPath(apkPath);
     return $"{PublicSiteUrls.SiteRootForLinks(http, config)}/downloads/AmThucVinhKhanh.apk?v={version}";
 }
 
@@ -177,7 +137,7 @@ app.MapGet("/qr/places/{id:int}", async (HttpContext http, int id, PlaceReposito
 // APK local (LAN): đặt file tại wwwroot/downloads/AmThucVinhKhanh.apk để điện thoại quét QR là bật prompt tải/cài.
 app.MapGet("/downloads/AmThucVinhKhanh.apk", (HttpContext http, IWebHostEnvironment env) =>
 {
-    var apkPath = FindApkPath(env);
+    var apkPath = ApkLocator.FindPreferredApkPath(env);
     if (string.IsNullOrWhiteSpace(apkPath) || !System.IO.File.Exists(apkPath))
         return Results.NotFound("Thiếu file APK. Đặt file .apk vào TourGuideCMS/wwwroot/downloads/ hoặc build Android APK.");
 
@@ -292,7 +252,7 @@ app.MapGet("/qr/app", (HttpContext http, IConfiguration config, IWebHostEnvironm
 // Chẩn đoán nhanh: xem CMS đang phục vụ APK nào cho QR.
 app.MapGet("/api/install/apk-info", (IWebHostEnvironment env) =>
 {
-    var apkPath = FindApkPath(env);
+    var apkPath = ApkLocator.FindPreferredApkPath(env);
     if (string.IsNullOrWhiteSpace(apkPath) || !System.IO.File.Exists(apkPath))
         return Results.NotFound(new { message = "Không tìm thấy APK." });
 
@@ -486,6 +446,23 @@ app.MapGet("/api/premium/entitlement", async (HttpRequest req, PlaceRepository p
     return Results.Json(new { unlocked });
 });
 
+// Heartbeat thiết bị app (Admin xem trang /Devices/Online).
+app.MapPost("/api/devices/heartbeat", async (HttpRequest req, CustomerAccountRepository repo, IConfiguration config) =>
+{
+    if (!MobileKeyOk(req, config))
+        return Results.Unauthorized();
+
+    var body = await System.Text.Json.JsonSerializer.DeserializeAsync<DeviceHeartbeatBody>(
+        req.Body,
+        new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+    if (body is null || string.IsNullOrWhiteSpace(body.DeviceInstallId))
+        return Results.BadRequest(new { message = "Thiếu deviceInstallId." });
+
+    var onMapTab = body.IsOnMapTab == true;
+    await repo.UpsertDeviceHeartbeatAsync(body.DeviceInstallId, body.Platform, body.AppVersion, onMapTab);
+    return Results.Ok(new { ok = true });
+});
+
 app.MapRazorPages();
 
 await using (var scope = app.Services.CreateAsyncScope())
@@ -543,4 +520,13 @@ internal sealed class PremiumPayDemoBody
     public int PlaceId { get; set; }
     public string? DeviceInstallId { get; set; }
     public int? CustomerUserId { get; set; }
+}
+
+internal sealed class DeviceHeartbeatBody
+{
+    public string? DeviceInstallId { get; set; }
+    public string? Platform { get; set; }
+    public string? AppVersion { get; set; }
+    /// <summary>Chỉ khi <c>true</c> mới coi là đang mở tab Bản đồ trên app.</summary>
+    public bool? IsOnMapTab { get; set; }
 }

@@ -10,9 +10,13 @@ namespace TourGuideApp2.Services;
 /// </summary>
 public static class NarrationQueueService
 {
+    private static readonly TimeSpan TtsHardTimeout = TimeSpan.FromSeconds(120);
+
     private sealed class NarrationJob
     {
         public int PoiIndex { get; init; } = -1;
+        /// <summary>Khi có Id từ CMS, chỉ thử file <c>poi_{Id}.mp3</c> — không dùng index list (thứ tự API có thể khác máy bundle).</summary>
+        public int? BundledAudioPlaceId { get; init; }
         public string Lang { get; init; } = "vi";
         public string TtsFallbackText { get; init; } = "";
         public CancellationToken CancellationToken { get; init; }
@@ -34,7 +38,13 @@ public static class NarrationQueueService
     }
 
     /// <summary>Thử file âm thanh theo POI (chỉ tiếng Việt), không được thì TTS <paramref name="ttsFallbackText"/>.</summary>
-    public static Task<double?> EnqueuePoiOrTtsAsync(int poiIndex, string lang, string ttsFallbackText, CancellationToken cancellationToken = default)
+    /// <param name="bundledAudioPlaceId">Id POI từ CMS; khi &gt; 0, chỉ tìm <c>poi_{Id}.mp3</c> trong gói app (không dùng chỉ số trong list).</param>
+    public static Task<double?> EnqueuePoiOrTtsAsync(
+        int poiIndex,
+        string lang,
+        string ttsFallbackText,
+        CancellationToken cancellationToken = default,
+        int? bundledAudioPlaceId = null)
     {
         var tcs = new TaskCompletionSource<double?>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (poiIndex < 0 && string.IsNullOrWhiteSpace(ttsFallbackText))
@@ -46,6 +56,7 @@ public static class NarrationQueueService
         var job = new NarrationJob
         {
             PoiIndex = poiIndex,
+            BundledAudioPlaceId = bundledAudioPlaceId,
             Lang = string.IsNullOrWhiteSpace(lang) ? "vi" : lang.Trim(),
             TtsFallbackText = ttsFallbackText ?? "",
             CancellationToken = cancellationToken,
@@ -112,8 +123,9 @@ public static class NarrationQueueService
         var ct = job.CancellationToken;
         double? duration = null;
 
-        if (job.PoiIndex >= 0)
-            duration = await TryPlayPreRecordedPoiAudioAsync(job.PoiIndex, job.Lang, ct).ConfigureAwait(false);
+        if (job.PoiIndex >= 0 || job.BundledAudioPlaceId is > 0)
+            duration = await TryPlayPreRecordedPoiAudioAsync(job.PoiIndex, job.BundledAudioPlaceId, job.Lang, ct)
+                .ConfigureAwait(false);
 
         if (duration.HasValue)
             return duration;
@@ -135,19 +147,38 @@ public static class NarrationQueueService
                && lang.Trim().StartsWith("vi", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static async Task<double?> TryPlayPreRecordedPoiAudioAsync(int poiIndex, string lang, CancellationToken cancellationToken)
+    private static IEnumerable<string> PreRecordedAssetCandidates(int poiIndex, int? bundledPlaceId)
     {
-        if (poiIndex < 0) return null;
-        if (!IsVietnameseLanguage(lang)) return null;
-
-        var candidates = new[]
+        if (bundledPlaceId is > 0)
         {
-            $"audio/vietnamese/poi_{poiIndex}.mp3",
-            $"audio/vi/poi_{poiIndex}.mp3",
-            $"audio/poi_{poiIndex}.mp3"
-        };
+            var id = bundledPlaceId.Value;
+            yield return $"audio/vietnamese/poi_{id}.mp3";
+            yield return $"audio/vi/poi_{id}.mp3";
+            yield return $"audio/poi_{id}.mp3";
+            yield break;
+        }
 
-        foreach (var assetPath in candidates)
+        if (poiIndex < 0)
+            yield break;
+
+        yield return $"audio/vietnamese/poi_{poiIndex}.mp3";
+        yield return $"audio/vi/poi_{poiIndex}.mp3";
+        yield return $"audio/poi_{poiIndex}.mp3";
+    }
+
+    private static async Task<double?> TryPlayPreRecordedPoiAudioAsync(
+        int poiIndex,
+        int? bundledPlaceId,
+        string lang,
+        CancellationToken cancellationToken)
+    {
+        if (!IsVietnameseLanguage(lang))
+            return null;
+
+        if (bundledPlaceId is not > 0 && poiIndex < 0)
+            return null;
+
+        foreach (var assetPath in PreRecordedAssetCandidates(poiIndex, bundledPlaceId))
         {
             Stream? stream = null;
             try
@@ -245,6 +276,18 @@ public static class NarrationQueueService
     private static bool LocaleLanguageStartsWith(Locale l, string prefix) =>
         !string.IsNullOrEmpty(l.Language) && l.Language.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
 
+    private static Locale? PickLocaleByPriority(Locale[] locales, params string[] languagePrefixes)
+    {
+        foreach (var prefix in languagePrefixes)
+        {
+            var hit = locales.FirstOrDefault(l => LocaleLanguageStartsWith(l, prefix));
+            if (hit is not null)
+                return hit;
+        }
+
+        return null;
+    }
+
     /// <summary>Android: TTS/GetLocales an toàn hơn khi gọi trên luồng UI.</summary>
     private static async Task<bool> SpeakAsync(string text, string lang, CancellationToken cancellationToken)
     {
@@ -277,26 +320,29 @@ public static class NarrationQueueService
             cancellationToken.ThrowIfCancellationRequested();
             var localeList = locales == null ? Array.Empty<Locale>() : locales.ToArray();
             var langLower = (lang ?? string.Empty).Trim().ToLowerInvariant();
-            var isVi = IsVietnameseLanguage(langLower);
-
-            Locale? pick = langLower switch
+            // Android thường báo tiếng Trung là zh*, cmn* (Mandarin), yue* (Cantonese) — chỉ "zh" dễ null → im tiếng.
+            var pick = langLower switch
             {
-                "en" => localeList.FirstOrDefault(l => LocaleLanguageStartsWith(l, "en")),
-                "zh" => localeList.FirstOrDefault(l => LocaleLanguageStartsWith(l, "zh")),
-                "ja" => localeList.FirstOrDefault(l => LocaleLanguageStartsWith(l, "ja")),
-                _ => localeList.FirstOrDefault(l => LocaleLanguageStartsWith(l, "vi"))
+                "en" => PickLocaleByPriority(localeList, "en"),
+                "zh" => PickLocaleByPriority(localeList, "zh", "cmn", "yue"),
+                "ja" => PickLocaleByPriority(localeList, "ja"),
+                _ => PickLocaleByPriority(localeList, "vi")
             };
 
-            if (!isVi)
-                pick ??= localeList.FirstOrDefault();
+            // Chế độ strict theo ngôn ngữ người dùng đã chọn:
+            // không tự rơi sang ngôn ngữ khác vì dễ gây "chọn A đọc B".
+            if (pick is null)
+                return false;
 
-            await TextToSpeech.Default.SpeakAsync(text, new SpeechOptions
-            {
-                Locale = pick,
-                Pitch = 1.0f,
-                Volume = 1.0f
-            }, cancellationToken).ConfigureAwait(false);
-            return true;
+            return await SpeakWithTimeoutAsync(
+                text,
+                new SpeechOptions
+                {
+                    Locale = pick,
+                    Pitch = 1.0f,
+                    Volume = 1.0f
+                },
+                cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -305,22 +351,24 @@ public static class NarrationQueueService
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"SpeakAsync: {ex.Message}");
-            try
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                await TextToSpeech.Default.SpeakAsync(text, options: null, cancelToken: cancellationToken)
-                    .ConfigureAwait(false);
-                return true;
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception innerEx)
-            {
-                System.Diagnostics.Debug.WriteLine($"SpeakAsync fallback: {innerEx.Message}");
-                return false;
-            }
+            return false;
+        }
+    }
+
+    private static async Task<bool> SpeakWithTimeoutAsync(string text, SpeechOptions? options, CancellationToken cancellationToken)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        linked.CancelAfter(TtsHardTimeout);
+
+        try
+        {
+            await TextToSpeech.Default.SpeakAsync(text, options, linked.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Timeout nội bộ, coi như phát thất bại để caller fallback/tiếp tục lượt sau.
+            return false;
         }
     }
 }

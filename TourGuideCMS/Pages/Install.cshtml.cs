@@ -10,8 +10,13 @@ namespace TourGuideCMS.Pages;
 public class InstallModel : PageModel
 {
     private readonly IConfiguration _config;
+    private readonly IWebHostEnvironment _env;
 
-    public InstallModel(IConfiguration config) => _config = config;
+    public InstallModel(IConfiguration config, IWebHostEnvironment env)
+    {
+        _config = config;
+        _env = env;
+    }
 
     public string QrPayloadUrl { get; private set; } = "";
     public string ApiPlacesUrl { get; private set; } = "";
@@ -35,11 +40,23 @@ public class InstallModel : PageModel
         AppDownloadDirectUrl = string.IsNullOrWhiteSpace(_config["App:AppDownloadUrl"])
             ? null
             : _config["App:AppDownloadUrl"]!.Trim();
-        var env = HttpContext.RequestServices.GetService<IWebHostEnvironment>();
-        LocalApkAvailable = FindAnyLocalApk(env);
-        EffectiveDownloadUrl = !string.IsNullOrWhiteSpace(AppDownloadDirectUrl)
-            ? AppDownloadDirectUrl
-            : (LocalApkAvailable ? "/downloads/AmThucVinhKhanh.apk" : null);
+        LocalApkAvailable = FindAnyLocalApk(_env);
+        if (!string.IsNullOrWhiteSpace(AppDownloadDirectUrl))
+            EffectiveDownloadUrl = AppDownloadDirectUrl;
+        else if (LocalApkAvailable)
+        {
+            var apkPath = ApkLocator.FindPreferredApkPath(_env);
+            if (!string.IsNullOrWhiteSpace(apkPath) && System.IO.File.Exists(apkPath))
+            {
+                var site = PublicSiteUrls.SiteRootForLinks(HttpContext, _config);
+                var v = ApkLocator.CacheBusterForPath(apkPath);
+                EffectiveDownloadUrl = $"{site}/downloads/AmThucVinhKhanh.apk?v={v}";
+            }
+            else
+                EffectiveDownloadUrl = "/downloads/AmThucVinhKhanh.apk";
+        }
+        else
+            EffectiveDownloadUrl = null;
         QrPayloadUrl = PublicSiteUrls.AppDownloadQrContent(HttpContext, _config);
         var siteRoot = PublicSiteUrls.SiteRootForLinks(HttpContext, _config);
         ApiPlacesUrl = $"{siteRoot}/api/places";

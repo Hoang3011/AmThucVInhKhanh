@@ -80,6 +80,7 @@ public sealed class CustomerAccountRepository
         }
 
         await EnsurePoiPremiumPaymentSchemaAsync(connection);
+        await EnsureDeviceHeartbeatSchemaAsync(connection);
     }
 
     /// <summary>DB cũ có thể chưa có bảng thanh toán — luôn gọi idempotent.</summary>
@@ -100,6 +101,95 @@ public sealed class CustomerAccountRepository
             CREATE INDEX IF NOT EXISTS IX_PoiPremiumPayment_Customer ON PoiPremiumPayment(CustomerUserId);
             """;
         await prem.ExecuteNonQueryAsync();
+    }
+
+    private static async Task EnsureDeviceHeartbeatSchemaAsync(SqliteConnection connection)
+    {
+        await using var hb = connection.CreateCommand();
+        hb.CommandText = """
+            CREATE TABLE IF NOT EXISTS AppDeviceHeartbeat (
+                DeviceInstallId TEXT NOT NULL PRIMARY KEY,
+                LastSeenUtc TEXT NOT NULL,
+                Platform TEXT,
+                AppVersion TEXT,
+                IsOnMap INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS IX_AppDeviceHeartbeat_LastSeen ON AppDeviceHeartbeat(LastSeenUtc);
+            """;
+        await hb.ExecuteNonQueryAsync();
+
+        if (!await ColumnExistsAsync(connection, "AppDeviceHeartbeat", "IsOnMap"))
+        {
+            await using var alter = connection.CreateCommand();
+            alter.CommandText = "ALTER TABLE AppDeviceHeartbeat ADD COLUMN IsOnMap INTEGER NOT NULL DEFAULT 0";
+            await alter.ExecuteNonQueryAsync();
+        }
+    }
+
+    /// <summary>App MAUI gửi khi đang / không đang ở tab Bản đồ.</summary>
+    public async Task UpsertDeviceHeartbeatAsync(string deviceInstallId, string? platform, string? appVersion, bool isOnMapTab)
+    {
+        var id = (deviceInstallId ?? string.Empty).Trim();
+        if (id.Length < 8)
+            return;
+
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        var utc = DateTime.UtcNow.ToString("O");
+        var mapFlag = isOnMapTab ? 1 : 0;
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO AppDeviceHeartbeat (DeviceInstallId, LastSeenUtc, Platform, AppVersion, IsOnMap)
+            VALUES (@d, @t, @p, @v, @m)
+            ON CONFLICT(DeviceInstallId) DO UPDATE SET
+                LastSeenUtc = excluded.LastSeenUtc,
+                Platform = excluded.Platform,
+                AppVersion = excluded.AppVersion,
+                IsOnMap = excluded.IsOnMap;
+            """;
+        cmd.Parameters.AddWithValue("@d", id);
+        cmd.Parameters.AddWithValue("@t", utc);
+        cmd.Parameters.AddWithValue("@p", string.IsNullOrWhiteSpace(platform) ? (object)DBNull.Value : platform.Trim());
+        cmd.Parameters.AddWithValue("@v", string.IsNullOrWhiteSpace(appVersion) ? (object)DBNull.Value : appVersion.Trim());
+        cmd.Parameters.AddWithValue("@m", mapFlag);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    /// <summary>Thiết bị đã từng gửi heartbeat (mới nhất trước), kèm cờ tab Bản đồ từ lần ping cuối.</summary>
+    public async Task<IReadOnlyList<DevicePresenceRow>> ListDevicePresenceAsync(int maxRows = 500)
+    {
+        maxRows = Math.Clamp(maxRows, 1, 2000);
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        var list = new List<DevicePresenceRow>();
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT DeviceInstallId, LastSeenUtc, IsOnMap, Platform, AppVersion
+            FROM AppDeviceHeartbeat
+            ORDER BY datetime(LastSeenUtc) DESC
+            LIMIT @lim;
+            """;
+        cmd.Parameters.AddWithValue("@lim", maxRows);
+        await using var r = await cmd.ExecuteReaderAsync();
+        while (await r.ReadAsync())
+        {
+            var devId = r.GetString(0);
+            var lsRaw = r.GetString(1);
+            var ls = DateTime.TryParse(lsRaw, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed)
+                ? parsed.ToUniversalTime()
+                : DateTime.MinValue;
+            var onMap = !r.IsDBNull(2) && r.GetInt32(2) != 0;
+            list.Add(new DevicePresenceRow(
+                devId,
+                ls,
+                onMap,
+                r.IsDBNull(3) ? null : r.GetString(3),
+                r.IsDBNull(4) ? null : r.GetString(4)));
+        }
+
+        return list;
     }
 
     public async Task EnsureSchemaAsync()
@@ -740,3 +830,10 @@ public sealed record PremiumRevenuePayerRow(
     string DeviceInstallId,
     double AmountVnd,
     DateTime PaidAtUtc);
+
+public sealed record DevicePresenceRow(
+    string DeviceInstallId,
+    DateTime LastSeenUtc,
+    bool IsOnMapTab,
+    string? Platform,
+    string? AppVersion);

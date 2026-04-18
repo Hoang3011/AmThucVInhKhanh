@@ -44,88 +44,14 @@
                 Stroke="#E0E0E0"
                 StrokeThickness="1"
                 Padding="12">
-                <VerticalStackLayout Spacing="10">
-                    <Label Text="Tài khoản khách hàng"
+                <VerticalStackLayout Spacing="8">
+                    <Label Text="Dùng app trực tiếp"
                            FontAttributes="Bold"
                            FontSize="18"
                            TextColor="#0D47A1" />
-                    <Label Text="Đăng nhập để sử dụng các chức năng của ứng dụng."
+                    <Label Text="Không cần đăng nhập. Chọn tab Bản đồ để xem POI và nghe thuyết minh. Quản lý khách hàng vẫn thực hiện trên web CMS."
                            FontSize="13"
-                           TextColor="#546E7A" />
-
-                    <VerticalStackLayout x:Name="loggedOutPanel" Spacing="10">
-                        <Label Text="Email hoặc số điện thoại" FontSize="13" TextColor="#37474F" />
-                        <Entry x:Name="accountEntry"
-                               Placeholder="Ví dụ: abc@gmail.com hoặc 09xxxxxxxx"
-                               PlaceholderColor="#90A4AE"
-                               TextColor="#263238"
-                               Keyboard="Text"
-                               BackgroundColor="#F5F7FA"
-                               HeightRequest="44" />
-
-                        <Label Text="Mật khẩu" FontSize="13" TextColor="#37474F" />
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                            <Entry x:Name="passwordEntry"
-                                   Grid.Column="0"
-                                   Placeholder="Tối thiểu 6 ký tự"
-                                   PlaceholderColor="#90A4AE"
-                                   TextColor="#263238"
-                                   IsPassword="True"
-                                   BackgroundColor="#F5F7FA"
-                                   HeightRequest="44" />
-                            <Button x:Name="toggleLoginPasswordButton"
-                                    Grid.Column="1"
-                                    Text="👁"
-                                    Clicked="OnToggleLoginPasswordClicked"
-                                    BackgroundColor="#CFD8DC"
-                                    TextColor="#263238"
-                                    CornerRadius="10"
-                                    WidthRequest="52"
-                                    HeightRequest="44" />
-                        </Grid>
-
-                        <HorizontalStackLayout Spacing="8">
-                            <Button Text="Đăng nhập"
-                                    Clicked="OnLoginClicked"
-                                    BackgroundColor="#1E88E5"
-                                    TextColor="White"
-                                    CornerRadius="10"
-                                    HeightRequest="44" />
-                            <Button Text="Đăng ký"
-                                    Clicked="OnOpenRegisterClicked"
-                                    BackgroundColor="#FF6200"
-                                    TextColor="White"
-                                    CornerRadius="10"
-                                    HeightRequest="44" />
-                        </HorizontalStackLayout>
-                    </VerticalStackLayout>
-
-                    <VerticalStackLayout x:Name="loggedInPanel" IsVisible="False" Spacing="8">
-                        <Label x:Name="welcomeUserLabel"
-                               Text="Xin chào, khách hàng!"
-                               FontAttributes="Bold"
-                               TextColor="#2E7D32" />
-                        <Label Text="Bạn đã đăng nhập. Có thể dùng đầy đủ chức năng."
-                               FontSize="13"
-                               TextColor="#546E7A" />
-                        <Label x:Name="accountInfoLabel"
-                               Text="Tài khoản: -"
-                               FontSize="13"
-                               TextColor="#37474F" />
-                        <Label x:Name="createdAtInfoLabel"
-                               Text="Ngày tạo: -"
-                               FontSize="13"
-                               TextColor="#37474F" />
-                        <Button Text="Đăng xuất"
-                                Clicked="OnLogoutClicked"
-                                BackgroundColor="#E53935"
-                                TextColor="White"
-                                CornerRadius="10" />
-                    </VerticalStackLayout>
-
-                    <Label x:Name="authStatusLabel"
-                           FontSize="12"
-                           TextColor="#666666"
+                           TextColor="#546E7A"
                            LineBreakMode="WordWrap" />
                 </VerticalStackLayout>
             </Border>
