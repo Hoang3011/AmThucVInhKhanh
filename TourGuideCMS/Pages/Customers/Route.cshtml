@@ -1,17 +1,32 @@
 @page
 @model TourGuideCMS.Pages.Customers.RouteModel
 @{
-    ViewData["Title"] = $"Tuyến di chuyển — {Model.Customer?.FullName}";
+    var titleName = Model.Customer?.FullName ?? Model.DeviceSnapshot?.DeviceName ?? "Thiết bị";
+    ViewData["Title"] = $"Tuyến di chuyển — {titleName}";
 }
 
 <h1>Tuyến di chuyển</h1>
 <p>
-    <strong>@Model.Customer?.FullName</strong> (@Model.Customer?.PhoneOrEmail) — Id <code>@Model.Id</code>
+    @if (Model.Customer is not null)
+    {
+        <strong>@Model.Customer.FullName</strong> <span>(@Model.Customer.PhoneOrEmail)</span> <span>— Id <code>@Model.Customer.Id</code></span>
+    }
+    else if (Model.DeviceSnapshot is not null)
+    {
+        <strong>@Model.DeviceSnapshot.DeviceName</strong> <span>— Thiết bị <code>@Model.DeviceSnapshot.DeviceInstallId</code></span>
+    }
     · @Model.PointCount điểm đồng bộ từ app
 </p>
 
 <p>
-    <a asp-page="Heatmap" asp-route-id="@Model.Id" class="btn btn-outline-primary btn-sm">Xem heatmap</a>
+    @if (!string.IsNullOrWhiteSpace(Model.DeviceSnapshot?.DeviceInstallId))
+    {
+        <a asp-page="Heatmap" asp-route-deviceInstallId="@Model.DeviceSnapshot.DeviceInstallId" class="btn btn-outline-primary btn-sm">Xem heatmap</a>
+    }
+    else
+    {
+        <a asp-page="Heatmap" asp-route-id="@Model.Id" class="btn btn-outline-primary btn-sm">Xem heatmap</a>
+    }
     <a asp-page="Index" class="btn btn-outline-secondary btn-sm">← Danh sách khách</a>
 </p>
 

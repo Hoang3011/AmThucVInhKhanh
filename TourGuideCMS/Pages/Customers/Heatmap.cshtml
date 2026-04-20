@@ -1,13 +1,30 @@
 @page
 @model TourGuideCMS.Pages.Customers.HeatmapModel
 @{
-    ViewData["Title"] = $"Heatmap — {Model.Customer?.FullName}";
+    var titleName = Model.Customer?.FullName ?? Model.DeviceSnapshot?.DeviceName ?? "Thiết bị";
+    ViewData["Title"] = $"Heatmap — {titleName}";
 }
 
 <h1>Heatmap (theo tuyến đồng bộ)</h1>
 <p>
-    <strong>@Model.Customer?.FullName</strong> — @Model.PointCount điểm
-    · <a asp-page="Route" asp-route-id="@Model.Id">Tuyến</a>
+    @if (Model.Customer is not null)
+    {
+        <strong>@Model.Customer.FullName</strong>
+    }
+    else if (Model.DeviceSnapshot is not null)
+    {
+        <strong>@Model.DeviceSnapshot.DeviceName</strong> <span class="text-muted">(<code>@Model.DeviceSnapshot.DeviceInstallId</code>)</span>
+    }
+    — @Model.PointCount điểm
+    ·
+    @if (!string.IsNullOrWhiteSpace(Model.DeviceSnapshot?.DeviceInstallId))
+    {
+        <a asp-page="Route" asp-route-deviceInstallId="@Model.DeviceSnapshot.DeviceInstallId">Tuyến</a>
+    }
+    else
+    {
+        <a asp-page="Route" asp-route-id="@Model.Id">Tuyến</a>
+    }
     · <a asp-page="Index">← Khách hàng</a>
 </p>
 

@@ -30,7 +30,10 @@ namespace TourGuideApp2
                     try
                     {
                         if (Connectivity.Current.NetworkAccess == NetworkAccess.Internet)
+                        {
                             _ = PlaySyncService.FlushPendingAsync();
+                            CustomerRouteSyncService.TryFlushOnNetworkAvailable();
+                        }
                     }
                     catch
                     {
@@ -56,6 +59,8 @@ namespace TourGuideApp2
             try
             {
                 _ = PlaySyncService.FlushPendingAsync();
+                if (Connectivity.Current.NetworkAccess == NetworkAccess.Internet)
+                    CustomerRouteSyncService.TryFlushOnNetworkAvailable();
             }
             catch
             {

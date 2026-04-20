@@ -16,7 +16,11 @@ public class HeatmapModel : PageModel
     [BindProperty(SupportsGet = true)]
     public int Id { get; set; }
 
+    [BindProperty(SupportsGet = true)]
+    public string? DeviceInstallId { get; set; }
+
     public CustomerUserRow? Customer { get; private set; }
+    public DeviceRouteSnapshotRow? DeviceSnapshot { get; private set; }
 
     public string RoutePointsJson { get; private set; } = "[]";
 
@@ -24,14 +28,29 @@ public class HeatmapModel : PageModel
 
     public async Task<IActionResult> OnGetAsync()
     {
-        if (Id <= 0)
+        var raw = string.Empty;
+        if (Id > 0)
+        {
+            Customer = await _repo.GetUserByIdAsync(Id);
+            if (Customer is null)
+                return NotFound();
+            raw = await _repo.GetRouteSnapshotJsonAsync(Id) ?? "[]";
+        }
+        else if (!string.IsNullOrWhiteSpace(DeviceInstallId))
+        {
+            DeviceInstallId = DeviceInstallId.Trim();
+            DeviceSnapshot = await _repo.GetDeviceRouteSnapshotAsync(DeviceInstallId);
+            if (DeviceSnapshot is null)
+                return NotFound();
+            raw = await _repo.GetRouteSnapshotJsonByDeviceAsync(DeviceInstallId) ?? "[]";
+            if (DeviceSnapshot.CustomerUserId is > 0)
+                Customer = await _repo.GetUserByIdAsync(DeviceSnapshot.CustomerUserId.Value);
+        }
+        else
+        {
             return RedirectToPage("Index");
+        }
 
-        Customer = await _repo.GetUserByIdAsync(Id);
-        if (Customer is null)
-            return NotFound();
-
-        var raw = await _repo.GetRouteSnapshotJsonAsync(Id);
         RoutePointsJson = string.IsNullOrWhiteSpace(raw) ? "[]" : raw;
         try
         {

@@ -15,7 +15,7 @@ public static class DeviceHeartbeatService
 
     private static HttpClient CreateHttp()
     {
-        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(22) };
         CmsTunnelHttp.ApplyTo(h);
         return h;
     }
@@ -132,9 +132,13 @@ public static class DeviceHeartbeatService
             _ = await res.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
             return res.IsSuccessStatusCode;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
         }
         catch
         {

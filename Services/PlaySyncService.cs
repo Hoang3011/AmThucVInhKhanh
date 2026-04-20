@@ -1,10 +1,11 @@
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Maui.Devices;
 using Microsoft.Maui.Storage;
 
 namespace TourGuideApp2.Services;
 
-/// <summary>Đồng bộ lượt phát thuyết minh lên CMS (khi có URL và tài khoản đăng nhập từ máy chủ).</summary>
+/// <summary>Đồng bộ lượt phát thuyết minh lên CMS theo từng thiết bị (và tùy chọn tài khoản).</summary>
 public static class PlaySyncService
 {
     /// <summary>4G / mạng chậm: timeout dài hơn; lượt vẫn lưu file chờ nếu lỗi.</summary>
@@ -12,7 +13,7 @@ public static class PlaySyncService
 
     private static HttpClient CreateHttp()
     {
-        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
+        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(28) };
         CmsTunnelHttp.ApplyTo(h);
         return h;
     }
@@ -90,6 +91,8 @@ public static class PlaySyncService
         var current = new PlayLogDto
         {
             CustomerUserId = AuthService.GetCustomerIdForServerSync(),
+            DeviceInstallId = DeviceInstallIdService.GetOrCreate(),
+            DeviceName = $"{DeviceInfo.Current.Manufacturer} {DeviceInfo.Current.Model}".Trim(),
             PlaceName = placeName,
             Source = source,
             Language = language,
@@ -138,7 +141,13 @@ public static class PlaySyncService
 
             using var res = await Http.SendAsync(req).ConfigureAwait(false);
             _ = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
-            return res.IsSuccessStatusCode;
+            if (res.IsSuccessStatusCode)
+            {
+                PlaceApiService.TryLearnPublicSyncOriginFromRawUrl(origin);
+                return true;
+            }
+
+            return false;
         }
         catch
         {
@@ -189,6 +198,12 @@ public static class PlaySyncService
     {
         [JsonPropertyName("customerUserId")]
         public int? CustomerUserId { get; set; }
+
+        [JsonPropertyName("deviceInstallId")]
+        public string? DeviceInstallId { get; set; }
+
+        [JsonPropertyName("deviceName")]
+        public string? DeviceName { get; set; }
 
         [JsonPropertyName("placeName")]
         public string? PlaceName { get; set; }

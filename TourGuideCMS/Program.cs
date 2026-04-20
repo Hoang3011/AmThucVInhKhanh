@@ -324,6 +324,8 @@ app.MapPost("/api/plays/log", async (HttpRequest req, CustomerAccountRepository 
 
     await repo.AddPlayAsync(
         body.CustomerUserId,
+        body.DeviceInstallId,
+        body.DeviceName,
         body.PlaceName ?? "",
         body.Source ?? "",
         body.Language,
@@ -339,16 +341,27 @@ app.MapGet("/api/plays/history", async (HttpRequest req, CustomerAccountReposito
     if (!MobileKeyOk(req, config))
         return Results.Unauthorized();
 
-    var q = req.Query["customerUserId"].ToString();
-    if (string.IsNullOrWhiteSpace(q))
-        q = req.Query["customer_user_id"].ToString();
-    if (!int.TryParse(q, out var customerUserId) || customerUserId <= 0)
-        return Results.BadRequest(new { message = "Thiếu customerUserId (query)." });
+    var deviceInstallId = (req.Query["deviceInstallId"].ToString() ?? string.Empty).Trim();
+    IReadOnlyList<NarrationPlayRow> rows;
+    if (deviceInstallId.Length >= 8)
+    {
+        rows = await repo.ListPlaysForDeviceAsync(deviceInstallId, 500);
+    }
+    else
+    {
+        var q = req.Query["customerUserId"].ToString();
+        if (string.IsNullOrWhiteSpace(q))
+            q = req.Query["customer_user_id"].ToString();
+        if (!int.TryParse(q, out var customerUserId) || customerUserId <= 0)
+            return Results.BadRequest(new { message = "Thiếu customerUserId hoặc deviceInstallId (query)." });
+        rows = await repo.ListPlaysForCustomerAsync(customerUserId, 500);
+    }
 
-    var rows = await repo.ListPlaysForCustomerAsync(customerUserId, 500);
     var payload = rows.Select(p => new
     {
         id = p.Id,
+        deviceInstallId = p.DeviceInstallId,
+        deviceName = p.DeviceName,
         placeName = p.PlaceName,
         source = p.Source,
         language = p.Language,
@@ -371,11 +384,17 @@ app.MapPost("/api/customers/route-sync", async (HttpRequest req, CustomerAccount
     var body = await System.Text.Json.JsonSerializer.DeserializeAsync<RouteSyncBody>(
         req.Body,
         new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-    if (body is null || body.CustomerUserId <= 0)
-        return Results.BadRequest(new { message = "Thiếu customerUserId hoặc body không hợp lệ." });
+    if (body is null)
+        return Results.BadRequest(new { message = "Body không hợp lệ." });
+    var deviceInstallId = (body.DeviceInstallId ?? string.Empty).Trim();
+    if ((body.CustomerUserId ?? 0) <= 0 && deviceInstallId.Length < 8)
+        return Results.BadRequest(new { message = "Thiếu customerUserId hoặc deviceInstallId." });
 
     var json = System.Text.Json.JsonSerializer.Serialize(body.Points ?? []);
-    await repo.UpsertRouteSnapshotAsync(body.CustomerUserId, json);
+    if ((body.CustomerUserId ?? 0) > 0)
+        await repo.UpsertRouteSnapshotAsync(body.CustomerUserId!.Value, json);
+    if (deviceInstallId.Length >= 8)
+        await repo.UpsertDeviceRouteSnapshotAsync(deviceInstallId, body.DeviceName, (body.CustomerUserId ?? 0) > 0 ? body.CustomerUserId : null, json);
     return Results.Ok(new { ok = true });
 });
 
@@ -514,6 +533,8 @@ internal sealed class LoginBody
 internal sealed class PlayLogBody
 {
     public int? CustomerUserId { get; set; }
+    public string? DeviceInstallId { get; set; }
+    public string? DeviceName { get; set; }
     public string? PlaceName { get; set; }
     public string? Source { get; set; }
     public string? Language { get; set; }
@@ -523,7 +544,9 @@ internal sealed class PlayLogBody
 
 internal sealed class RouteSyncBody
 {
-    public int CustomerUserId { get; set; }
+    public int? CustomerUserId { get; set; }
+    public string? DeviceInstallId { get; set; }
+    public string? DeviceName { get; set; }
     public List<RoutePointSyncItem>? Points { get; set; }
 }
 

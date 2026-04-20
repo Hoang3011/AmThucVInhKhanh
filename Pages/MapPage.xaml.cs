@@ -93,6 +93,8 @@ public partial class MapPage : ContentPage
     private const double FootNavCueTriggerMeters = 40;
     private const double FootNavMinTtsGapSeconds = 9;
     private const double FootNavSkipCueIfCloserThanMeters = 22;
+    private DateTime? _manualNarrationOverrideUntilUtc;
+    private const int ManualNarrationOverrideSeconds = 25;
 
     /// <summary>Ưu tiên POI từ API khi đã cấu hình <c>PoiApiUrl</c> (+ <c>PoiApiKey</c> cho Supabase); không thì đọc <c>VinhKhanh.db</c> cục bộ.</summary>
     private async Task<List<Place>> LoadPlacesAsync()
@@ -608,6 +610,7 @@ public partial class MapPage : ContentPage
             poiDtos.Add(new
             {
                 id = p.Id,
+                idx = i,
                 name = TruncateForMapEmbed(p.Name, 200),
                 lat = p.Latitude,
                 lng = p.Longitude,
@@ -1142,11 +1145,11 @@ for (var i = 0; i < pois.length; i++) {{
               + `<div class='poi-desc'><span class='poi-label'>JA</span>${{esc(jaText)}}</div>`
               + payLine
               + `<div class='poi-actions'>`
-              + `<a class='poi-btn' href='app://directions?id=${{p.id}}' style='background:#0D47A1;color:#fff'>🧭 Chỉ đường</a>`
-              + `<a class='poi-btn' href='app://speak-vi?id=${{p.id}}'>Nghe VN</a>`
-              + `<a class='poi-btn' href='app://speak-zh?id=${{p.id}}'>听 ZH</a>`
-              + `<a class='poi-btn secondary' href='app://speak-en?id=${{p.id}}'>Listen EN</a>`
-              + `<a class='poi-btn secondary' href='app://speak-ja?id=${{p.id}}'>聞く JA</a>`
+              + `<a class='poi-btn' href='app://directions?id=${{p.id}}&idx=${{p.idx}}' style='background:#0D47A1;color:#fff'>🧭 Chỉ đường</a>`
+              + `<a class='poi-btn' href='app://speak-vi?id=${{p.id}}&idx=${{p.idx}}'>Nghe VN</a>`
+              + `<a class='poi-btn' href='app://speak-zh?id=${{p.id}}&idx=${{p.idx}}'>听 ZH</a>`
+              + `<a class='poi-btn secondary' href='app://speak-en?id=${{p.id}}&idx=${{p.idx}}'>Listen EN</a>`
+              + `<a class='poi-btn secondary' href='app://speak-ja?id=${{p.id}}&idx=${{p.idx}}'>聞く JA</a>`
               + `</div>`
               + `</div>`;
 
@@ -1254,10 +1257,10 @@ for (var i = 0; i < pois.length; i++) {{
           + ""<div class='name'>"" + esc(p.name || ('POI #' + p.id)) + ""</div>""
           + ""<div class='desc'>Mở mạng lại để thấy nền bản đồ chi tiết.</div>""
           + ""<div class='row'>""
-          + ""<a href='app://speak-vi?id="" + p.id + ""'>Nghe VI</a>""
-          + ""<a href='app://speak-en?id="" + p.id + ""' class='secondary'>EN</a>""
-          + ""<a href='app://speak-zh?id="" + p.id + ""' class='secondary'>ZH</a>""
-          + ""<a href='app://speak-ja?id="" + p.id + ""' class='secondary'>JA</a>""
+          + ""<a href='app://speak-vi?id="" + p.id + ""&idx="" + p.idx + ""'>Nghe VI</a>""
+          + ""<a href='app://speak-en?id="" + p.id + ""&idx="" + p.idx + ""' class='secondary'>EN</a>""
+          + ""<a href='app://speak-zh?id="" + p.id + ""&idx="" + p.idx + ""' class='secondary'>ZH</a>""
+          + ""<a href='app://speak-ja?id="" + p.id + ""&idx="" + p.idx + ""' class='secondary'>JA</a>""
           + ""</div></div>"";
       }}
       host.innerHTML = html || ""<div class='card'>Chưa có POI để hiển thị.</div>"";
@@ -1853,6 +1856,8 @@ for (var i = 0; i < pois.length; i++) {{
 
     private async Task HandleQrScanAsync(string rawValue)
     {
+        PlaceApiService.TryLearnPublicSyncOriginFromRawUrl(rawValue);
+
         if (!TryResolvePoiIdFromQr(rawValue, out var poiId))
         {
             await DisplayAlertAsync("QR không hợp lệ", "Không tìm thấy POI từ mã QR này.", "OK");
@@ -1881,6 +1886,7 @@ for (var i = 0; i < pois.length; i++) {{
 
         if (!string.IsNullOrWhiteSpace(text))
         {
+            BeginManualNarrationOverride();
             CancelProximitySpeech();
             CancelBusStopSpeech();
             try
@@ -2108,6 +2114,10 @@ for (var i = 0; i < pois.length; i++) {{
 
     private async Task CheckProximityAndSpeakAsync()
     {
+        if (_manualNarrationOverrideUntilUtc is DateTime manualOverrideUntil
+            && DateTime.UtcNow < manualOverrideUntil)
+            return;
+
         string? textToSpeak = null;
         var speakTtsLang = _selectedLanguage;
         int speakPoiIndex = -1;
@@ -2914,27 +2924,40 @@ for (var i = 0; i < pois.length; i++) {{
                 double? destLng = null;
                 string? directionsDestinationName = null;
 
-                var idMatch = Regex.Match(e.Url, @"[?&]id=(\d+)", RegexOptions.IgnoreCase);
-                if (idMatch.Success
-                    && int.TryParse(idMatch.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid)
-                    && _poiIndexById.TryGetValue(pid, out var idx)
-                    && idx >= 0 && idx < _pois.Count)
+                var idxMatch = Regex.Match(e.Url, @"[?&]idx=(\d+)", RegexOptions.IgnoreCase);
+                if (idxMatch.Success
+                    && int.TryParse(idxMatch.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var directIdx)
+                    && directIdx >= 0 && directIdx < _pois.Count)
                 {
-                    var p = _pois[idx];
+                    var p = _pois[directIdx];
                     destLat = p.Latitude;
                     destLng = p.Longitude;
                     directionsDestinationName = string.IsNullOrWhiteSpace(p.Name) ? $"POI #{p.Id}" : p.Name;
                 }
                 else
                 {
-                    var latM = Regex.Match(e.Url, @"[?&]lat=([^&]+)", RegexOptions.IgnoreCase);
-                    var lngM = Regex.Match(e.Url, @"[?&]lng=([^&]+)", RegexOptions.IgnoreCase);
-                    if (latM.Success && lngM.Success
-                        && double.TryParse(Uri.UnescapeDataString(latM.Groups[1].Value), NumberStyles.Float, CultureInfo.InvariantCulture, out var la)
-                        && double.TryParse(Uri.UnescapeDataString(lngM.Groups[1].Value), NumberStyles.Float, CultureInfo.InvariantCulture, out var ln))
+                    var idMatch = Regex.Match(e.Url, @"[?&]id=(\d+)", RegexOptions.IgnoreCase);
+                    if (idMatch.Success
+                        && int.TryParse(idMatch.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid)
+                        && _poiIndexById.TryGetValue(pid, out var idx)
+                        && idx >= 0 && idx < _pois.Count)
                     {
-                        destLat = la;
-                        destLng = ln;
+                        var p = _pois[idx];
+                        destLat = p.Latitude;
+                        destLng = p.Longitude;
+                        directionsDestinationName = string.IsNullOrWhiteSpace(p.Name) ? $"POI #{p.Id}" : p.Name;
+                    }
+                    else
+                    {
+                        var latM = Regex.Match(e.Url, @"[?&]lat=([^&]+)", RegexOptions.IgnoreCase);
+                        var lngM = Regex.Match(e.Url, @"[?&]lng=([^&]+)", RegexOptions.IgnoreCase);
+                        if (latM.Success && lngM.Success
+                            && double.TryParse(Uri.UnescapeDataString(latM.Groups[1].Value), NumberStyles.Float, CultureInfo.InvariantCulture, out var la)
+                            && double.TryParse(Uri.UnescapeDataString(lngM.Groups[1].Value), NumberStyles.Float, CultureInfo.InvariantCulture, out var ln))
+                        {
+                            destLat = la;
+                            destLng = ln;
+                        }
                     }
                 }
 
@@ -2982,16 +3005,24 @@ for (var i = 0; i < pois.length; i++) {{
 
         try
         {
-            // Chỉ cần lấy id từ ?id=N — không có & nên parse cực đơn giản.
-            var idMatch = Regex.Match(e.Url, @"\?id=(\d+)", RegexOptions.IgnoreCase);
-            if (!idMatch.Success)
-                return;
+            BeginManualNarrationOverride();
+            var poiIndex = -1;
+            var idxMatch = Regex.Match(e.Url, @"(?:\?|&)idx=(\d+)", RegexOptions.IgnoreCase);
+            if (idxMatch.Success
+                && int.TryParse(idxMatch.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var directIdx)
+                && directIdx >= 0 && directIdx < _pois.Count)
+            {
+                poiIndex = directIdx;
+            }
+            else
+            {
+                var idMatch = Regex.Match(e.Url, @"(?:\?|&)id=(\d+)", RegexOptions.IgnoreCase);
+                if (!idMatch.Success || !int.TryParse(idMatch.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id) || id < 0)
+                    return;
 
-            if (!int.TryParse(idMatch.Groups[1].Value, out var id) || id < 0)
-                return;
-
-            if (!_poiIndexById.TryGetValue(id, out var poiIndex) || poiIndex < 0 || poiIndex >= _pois.Count)
-                return;
+                if (!_poiIndexById.TryGetValue(id, out poiIndex) || poiIndex < 0 || poiIndex >= _pois.Count)
+                    return;
+            }
 
             var place = _pois[poiIndex];
             if (!await EnsurePoiListenPaidAsync(place))
@@ -3007,6 +3038,12 @@ for (var i = 0; i < pois.length; i++) {{
             PlaySyncService.Enqueue(place.Name, "Map", ttsLang, durationSeconds, DateTime.Now);
         }
         catch { }
+    }
+
+    private void BeginManualNarrationOverride()
+    {
+        _manualNarrationOverrideUntilUtc = DateTime.UtcNow.AddSeconds(ManualNarrationOverrideSeconds);
+        _activeProximityPoiIndex = -1;
     }
 
     private static bool TryParsePoiDeepLinkFromWebView(string? rawUrl, out int poiId, out string lang)

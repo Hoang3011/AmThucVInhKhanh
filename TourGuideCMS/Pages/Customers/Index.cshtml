@@ -19,7 +19,7 @@
             <th>Email / SĐT</th>
             <th>Mật khẩu</th>
             <th>Ngày tạo (UTC)</th>
-            <th>Tuyến / Heatmap</th>
+            <th>Tuyến / Heatmap (theo tài khoản)</th>
         </tr>
     </thead>
     <tbody>
@@ -44,6 +44,45 @@
 @if (Model.Users.Count == 0)
 {
     <p class="alert alert-light border">Chưa có tài khoản nào đồng bộ từ app.</p>
+}
+
+<h2 class="h4 mt-4">Thiết bị đồng bộ từ app</h2>
+<p class="text-muted small">
+    Theo dõi theo từng thiết bị để quản lý đa máy: tuyến đường, heatmap, và lịch sử phát được gắn theo <code>deviceInstallId</code>.
+</p>
+<table class="table table-sm table-striped">
+    <thead>
+        <tr>
+            <th>Tên thiết bị</th>
+            <th>Mã thiết bị</th>
+            <th>Khách liên kết</th>
+            <th>Nền tảng/App</th>
+            <th>Cập nhật gần nhất (UTC)</th>
+            <th>Tuyến / Heatmap</th>
+        </tr>
+    </thead>
+    <tbody>
+    @foreach (var d in Model.Devices)
+    {
+        <tr>
+            <td>@d.DeviceName</td>
+            <td><code>@d.DeviceInstallId</code></td>
+            <td>@(string.IsNullOrWhiteSpace(d.CustomerPhoneOrEmail) ? "—" : $"{d.CustomerFullName} ({d.CustomerPhoneOrEmail})")</td>
+            <td>@(d.Platform ?? "-") / @(d.AppVersion ?? "-")</td>
+            <td>@(d.LastSeenUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm") ?? d.RouteUpdatedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm"))</td>
+            <td>
+                <a asp-page="/Customers/Route" asp-route-deviceInstallId="@d.DeviceInstallId">Tuyến</a>
+                ·
+                <a asp-page="/Customers/Heatmap" asp-route-deviceInstallId="@d.DeviceInstallId">Heatmap</a>
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+@if (Model.Devices.Count == 0)
+{
+    <p class="alert alert-light border">Chưa có thiết bị nào đồng bộ tuyến từ app.</p>
 }
 
 <p><a asp-page="/Index">← Trang chủ</a></p>

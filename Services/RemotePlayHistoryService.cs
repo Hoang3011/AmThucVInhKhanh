@@ -7,9 +7,6 @@ namespace TourGuideApp2.Services;
 
 public enum RemoteHistoryFetchStatus
 {
-    SkippedNotRemoteSession,
-    SkippedLocalSession,
-    /// <summary>Chưa có URL API POI / gốc CMS.</summary>
     SkippedNoCmsUrl,
     Unauthorized,
     Failed,
@@ -22,14 +19,14 @@ public readonly record struct RemoteHistoryFetchResult(
     IReadOnlyList<HistoryEntry> Items,
     string? Message);
 
-/// <summary>Tải lịch sử lượt phát từ CMS (cùng nguồn với trang /Plays) khi khách đăng nhập từ xa.</summary>
+/// <summary>Tải lịch sử lượt phát từ CMS theo từng thiết bị (web vẫn thấy toàn bộ).</summary>
 public static class RemotePlayHistoryService
 {
     private static readonly HttpClient Http = CreateHttp();
 
     private static HttpClient CreateHttp()
     {
-        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
+        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(28) };
         CmsTunnelHttp.ApplyTo(h);
         return h;
     }
@@ -39,21 +36,9 @@ public static class RemotePlayHistoryService
 
     public static async Task<RemoteHistoryFetchResult> FetchForCurrentCustomerAsync(CancellationToken ct)
     {
-        if (AuthService.GetCustomerIdForServerSync() is null)
-        {
-            if (AuthService.IsLoggedIn)
-            {
-                return new RemoteHistoryFetchResult(
-                    RemoteHistoryFetchStatus.SkippedLocalSession,
-                    [],
-                    "Phiên cục bộ: đăng xuất rồi đăng nhập lại khi CMS và mạng ổn để lấy Id khách từ máy chủ (đồng bộ Lượt phát / tuyến).");
-            }
-
-            return new RemoteHistoryFetchResult(
-                RemoteHistoryFetchStatus.SkippedNotRemoteSession,
-                [],
-                "Đăng nhập tài khoản ở tab Chính để gộp lịch sử với trang Lượt phát CMS.");
-        }
+        var deviceInstallId = DeviceInstallIdService.GetOrCreate();
+        if (string.IsNullOrWhiteSpace(deviceInstallId))
+            return new RemoteHistoryFetchResult(RemoteHistoryFetchStatus.Failed, [], "Không lấy được mã thiết bị.");
 
         var origins = PlaceApiService.GetCmsBaseUrlCandidatesForSync();
         if (origins.Count == 0)
@@ -64,12 +49,11 @@ public static class RemotePlayHistoryService
                 "Chưa cấu hình URL API POI (Cài đặt hoặc bản build).");
         }
 
-        var id = AuthService.GetCustomerIdForServerSync()!.Value;
         string? lastFailure = null;
 
         foreach (var origin in origins)
         {
-            var url = $"{origin.TrimEnd('/')}/api/plays/history?customerUserId={id}";
+            var url = $"{origin.TrimEnd('/')}/api/plays/history?deviceInstallId={Uri.EscapeDataString(deviceInstallId)}";
 
             try
             {
@@ -105,6 +89,7 @@ public static class RemotePlayHistoryService
                 }
 
                 var items = rows.Select(Map).OrderByDescending(x => x.Timestamp).ToList();
+                PlaceApiService.TryLearnPublicSyncOriginFromRawUrl(origin);
                 return new RemoteHistoryFetchResult(RemoteHistoryFetchStatus.Ok, items, null);
             }
             catch (Exception ex)

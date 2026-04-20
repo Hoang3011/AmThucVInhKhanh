@@ -2,6 +2,7 @@ using System.Net.Http;
 using System.Net;
 using System.Text.Json;
 using System.Threading;
+using System.Linq;
 using TourGuideApp2.Models;
 
 namespace TourGuideApp2.Services;
@@ -34,7 +35,8 @@ public static class PlaceApiService
 
     private static HttpClient CreatePlacesFetchHttp()
     {
-        var c = new HttpClient { Timeout = TimeSpan.FromSeconds(4) };
+        // Một số máy 4G chậm / tunnel lạnh — 4s hay fail hết dải URL rồi không học được gốc public.
+        var c = new HttpClient { Timeout = TimeSpan.FromSeconds(14) };
         CmsTunnelHttp.ApplyTo(c);
         return c;
     }
@@ -188,6 +190,45 @@ public static class PlaceApiService
         AddOriginCandidate(list, (Preferences.Default.Get(CmsListenPayPublicBaseUrlKey, "") ?? "").Trim().TrimEnd('/'));
         AddOriginCandidate(list, ParseOriginFromApiUrl(Preferences.Default.Get(PoiApiUrlPreferenceKey, string.Empty) ?? string.Empty));
         AddOriginCandidate(list, ParseOriginFromApiUrl(AppConfig.DefaultPoiApiUrl));
+
+        // Thiết bị chỉ có URL LAN trong build: trên 4G LAN treo ~timeout — phải thử host public trước trong cùng một lần gọi.
+        list.Sort(static (a, b) =>
+        {
+            static int LocalRank(string o) =>
+                Uri.TryCreate(o, UriKind.Absolute, out var u) && IsLikelyLocalOnlyHost(u.Host) ? 1 : 0;
+            var cmp = LocalRank(a).CompareTo(LocalRank(b));
+            return cmp != 0 ? cmp : string.CompareOrdinal(a, b);
+        });
+        return list;
+    }
+
+    /// <summary>Gộp mọi gốc có thể gọi <c>/api/devices/presence</c>: sync + authority từ từng URL <c>/api/places</c> (một số máy chỉ cấu hình places, chưa có prefs public).</summary>
+    public static IReadOnlyList<string> GetMergedCmsOriginCandidatesForPresence()
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var o in GetCmsBaseUrlCandidatesForSync())
+        {
+            var t = (o ?? string.Empty).Trim().TrimEnd('/');
+            if (!string.IsNullOrEmpty(t))
+                set.Add(t);
+        }
+
+        foreach (var api in GetApiUrlCandidatesForPlaces())
+        {
+            var origin = ParseOriginFromApiUrl(api);
+            var t = (origin ?? string.Empty).Trim().TrimEnd('/');
+            if (!string.IsNullOrEmpty(t))
+                set.Add(t);
+        }
+
+        var list = set.ToList();
+        list.Sort(static (a, b) =>
+        {
+            static int LocalRank(string o) =>
+                Uri.TryCreate(o, UriKind.Absolute, out var u) && IsLikelyLocalOnlyHost(u.Host) ? 1 : 0;
+            var cmp = LocalRank(a).CompareTo(LocalRank(b));
+            return cmp != 0 ? cmp : string.CompareOrdinal(a, b);
+        });
         return list;
     }
 
@@ -203,6 +244,20 @@ public static class PlaceApiService
             AddApiUrlCandidate(list, $"{configuredPublic}/api/places");
 
         AddApiUrlCandidate(list, AppConfig.DefaultPoiApiUrl);
+
+        // Giống sync: thử host public trước — tránh máy 2 chỉ còn URL LAN trong prefs thì 4G fail liên tục.
+        list.Sort(static (a, b) =>
+        {
+            static int LocalRank(string url)
+            {
+                if (!Uri.TryCreate(url, UriKind.Absolute, out var u))
+                    return 1;
+                return IsLikelyLocalOnlyHost(u.Host) ? 1 : 0;
+            }
+
+            var cmp = LocalRank(a).CompareTo(LocalRank(b));
+            return cmp != 0 ? cmp : string.CompareOrdinal(a, b);
+        });
         return list;
     }
 
@@ -328,7 +383,10 @@ public static class PlaceApiService
         return $"{b}/Listen/Pay?placeId={placeId}";
     }
 
-    public static async Task<List<Place>?> TryGetRemotePlacesAsync()
+    public static Task<List<Place>?> TryGetRemotePlacesAsync()
+        => TryGetRemotePlacesAsync(CancellationToken.None);
+
+    public static async Task<List<Place>?> TryGetRemotePlacesAsync(CancellationToken cancellationToken)
     {
         var apiUrls = GetApiUrlCandidatesForPlaces();
         if (apiUrls.Count == 0)
@@ -349,11 +407,14 @@ public static class PlaceApiService
                     request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {apiKey}");
                 }
 
-                using var response = await PlacesFetchHttp.SendAsync(request);
+                using var response = await PlacesFetchHttp.SendAsync(request, cancellationToken).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                     continue;
 
-                var json = await response.Content.ReadAsStringAsync();
+                // Luôn học gốc public từ chính URL vừa gọi được (không phụ thuộc qrPayload từng POI — nhiều máy chỉ có tunnel sau bước này).
+                TryLearnPublicSyncOriginFromRawUrl(apiUrl);
+
+                var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                 var apiItems = ParseApiItems(json);
                 if (apiItems.Count == 0)
                     continue;
@@ -367,6 +428,14 @@ public static class PlaceApiService
 
                 if (mapped.Count > 0)
                     return mapped;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                // timeout / hủy nội bộ — thử URL kế
             }
             catch
             {
@@ -450,6 +519,34 @@ public static class PlaceApiService
         catch
         {
             // học URL nền thất bại thì bỏ qua, không ảnh hưởng tải POI.
+        }
+    }
+
+    /// <summary>
+    /// Học gốc CMS public từ bất kỳ URL quét được (ví dụ QR Listen/Pay, install, API tunnel).
+    /// Không ghi đè bằng host LAN/private để tránh làm hỏng cấu hình chạy khác mạng.
+    /// </summary>
+    public static void TryLearnPublicSyncOriginFromRawUrl(string? rawUrl)
+    {
+        var raw = (rawUrl ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw))
+            return;
+        if (!Uri.TryCreate(raw, UriKind.Absolute, out var u))
+            return;
+        if (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps)
+            return;
+        if (IsHostUnusableForPhoneQr(u.Host) || IsLikelyLocalOnlyHost(u.Host))
+            return;
+
+        var origin = $"{u.Scheme}://{u.Authority}";
+        Preferences.Default.Set(CmsListenPayPublicBaseUrlKey, origin);
+
+        var savedPoiApi = (Preferences.Default.Get(PoiApiUrlPreferenceKey, string.Empty) ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(savedPoiApi)
+            || !Uri.TryCreate(savedPoiApi, UriKind.Absolute, out var savedApiUri)
+            || IsLikelyLocalOnlyHost(savedApiUri.Host))
+        {
+            Preferences.Default.Set(PoiApiUrlPreferenceKey, $"{origin}/api/places");
         }
     }
 
@@ -538,7 +635,7 @@ public static class PlaceApiService
 
     private static HttpClient CreatePresenceHttp()
     {
-        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
+        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(28) };
         CmsTunnelHttp.ApplyTo(h);
         return h;
     }
@@ -546,36 +643,78 @@ public static class PlaceApiService
     /// <summary>Đồng bộ danh sách thiết bị với trang CMS «Thiết bị online» (cửa sổ ping ~2 phút, tab Bản đồ).</summary>
     public static async Task<DevicePresenceResponse?> TryGetDevicePresenceAsync(CancellationToken cancellationToken = default)
     {
-        foreach (var origin in GetCmsBaseUrlCandidatesForSync())
+        for (var round = 0; round < 2; round++)
         {
-            if (string.IsNullOrWhiteSpace(origin))
-                continue;
+            if (round > 0)
+            {
+                try
+                {
+                    await Task.Delay(500, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            // Prime: GET /api/places không cần X-Mobile-Key — học tunnel/public.
             try
             {
-                var url = $"{origin.TrimEnd('/')}/api/devices/presence";
-                using var req = new HttpRequestMessage(HttpMethod.Get, url);
-                CmsTunnelHttp.ApplyTo(req);
-                var mobileKey = GetMobileApiKeyForSync();
-                if (!string.IsNullOrWhiteSpace(mobileKey))
-                    req.Headers.TryAddWithoutValidation("X-Mobile-Key", mobileKey);
-
-                using var res = await CmsPresenceHttp.SendAsync(req, cancellationToken).ConfigureAwait(false);
-                if (!res.IsSuccessStatusCode)
-                    continue;
-
-                await using var stream = await res.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-                var payload = await JsonSerializer.DeserializeAsync<DevicePresenceResponse>(stream, JsonDefault, cancellationToken)
-                    .ConfigureAwait(false);
-                if (payload?.Devices is not null)
-                    return payload;
+                _ = await TryGetRemotePlacesAsync(cancellationToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
             }
             catch
             {
-                // thử gốc CMS kế tiếp
+                // Vẫn thử presence.
+            }
+
+            foreach (var origin in GetMergedCmsOriginCandidatesForPresence())
+            {
+                if (string.IsNullOrWhiteSpace(origin))
+                    continue;
+                try
+                {
+                    var url = $"{origin.TrimEnd('/')}/api/devices/presence";
+                    using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                    CmsTunnelHttp.ApplyTo(req);
+                    var mobileKey = GetMobileApiKeyForSync();
+                    if (!string.IsNullOrWhiteSpace(mobileKey))
+                        req.Headers.TryAddWithoutValidation("X-Mobile-Key", mobileKey);
+
+                    using var res = await CmsPresenceHttp.SendAsync(req, cancellationToken).ConfigureAwait(false);
+                    if (!res.IsSuccessStatusCode)
+                        continue;
+
+                    var body = await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                    var trimmed = (body ?? string.Empty).TrimStart();
+                    if (trimmed.Length == 0 || trimmed.StartsWith('<') || trimmed.StartsWith("<!"))
+                        continue;
+
+                    var payload = JsonSerializer.Deserialize<DevicePresenceResponse>(body!, JsonDefault);
+                    if (payload is null)
+                        continue;
+                    payload.Devices ??= [];
+                    return payload;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (OperationCanceledException)
+                {
+                    // Timeout / hủy nội bộ — origin kế.
+                }
+                catch
+                {
+                    // thử gốc CMS kế tiếp
+                }
             }
         }
 

@@ -38,6 +38,19 @@ public static class CmsTunnelHttp
             request.Headers.TryAddWithoutValidation(DevTunnelSkipAntiPhishing, "true");
             if (!request.Headers.Accept.Any())
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            // Một số nhà mạng/WAF chặn client không có User-Agent (4G hay lỗi hơn Wi‑Fi/USB debug).
+            if (!request.Headers.UserAgent.Any())
+            {
+                try
+                {
+                    var v = Microsoft.Maui.ApplicationModel.AppInfo.Current.VersionString;
+                    request.Headers.TryAddWithoutValidation("User-Agent", $"AmThucVinhKhanh/{v} (MAUI)");
+                }
+                catch
+                {
+                    request.Headers.TryAddWithoutValidation("User-Agent", "AmThucVinhKhanh (MAUI)");
+                }
+            }
         }
         catch
         {

@@ -49,6 +49,8 @@ public sealed class CustomerAccountRepository
                 CREATE TABLE IF NOT EXISTS NarrationPlay (
                     Id INTEGER PRIMARY KEY AUTOINCREMENT,
                     CustomerUserId INTEGER,
+                    DeviceInstallId TEXT,
+                    DeviceName TEXT,
                     PlaceName TEXT NOT NULL,
                     Source TEXT NOT NULL,
                     Language TEXT,
@@ -65,6 +67,15 @@ public sealed class CustomerAccountRepository
                     UpdatedAtUtc TEXT NOT NULL,
                     FOREIGN KEY (CustomerUserId) REFERENCES CustomerUser(Id)
                 );
+                CREATE TABLE IF NOT EXISTS DeviceRouteSnapshot (
+                    DeviceInstallId TEXT PRIMARY KEY,
+                    DeviceName TEXT,
+                    CustomerUserId INTEGER,
+                    PointsJson TEXT NOT NULL,
+                    UpdatedAtUtc TEXT NOT NULL,
+                    FOREIGN KEY (CustomerUserId) REFERENCES CustomerUser(Id)
+                );
+                CREATE INDEX IF NOT EXISTS IX_DeviceRouteSnapshot_Customer ON DeviceRouteSnapshot(CustomerUserId);
                 """;
             await cmd.ExecuteNonQueryAsync();
 
@@ -77,6 +88,26 @@ public sealed class CustomerAccountRepository
             }
 
             _schemaReady = true;
+        }
+
+        if (!await ColumnExistsAsync(connection, "NarrationPlay", "DeviceInstallId"))
+        {
+            await using var alter = connection.CreateCommand();
+            alter.CommandText = "ALTER TABLE NarrationPlay ADD COLUMN DeviceInstallId TEXT";
+            await alter.ExecuteNonQueryAsync();
+        }
+
+        if (!await ColumnExistsAsync(connection, "NarrationPlay", "DeviceName"))
+        {
+            await using var alter = connection.CreateCommand();
+            alter.CommandText = "ALTER TABLE NarrationPlay ADD COLUMN DeviceName TEXT";
+            await alter.ExecuteNonQueryAsync();
+        }
+
+        await using (var idx = connection.CreateCommand())
+        {
+            idx.CommandText = "CREATE INDEX IF NOT EXISTS IX_NarrationPlay_Device ON NarrationPlay(DeviceInstallId)";
+            await idx.ExecuteNonQueryAsync();
         }
 
         await EnsurePoiPremiumPaymentSchemaAsync(connection);
@@ -320,11 +351,13 @@ public sealed class CustomerAccountRepository
         return (true, "Đăng nhập thành công.", new CustomerUserRow(id, fullName, email, password, created));
     }
 
-    public async Task AddPlayAsync(int? customerUserId, string placeName, string source, string? language,
+    public async Task AddPlayAsync(int? customerUserId, string? deviceInstallId, string? deviceName, string placeName, string source, string? language,
         double? durationSeconds, DateTime playedAtUtc)
     {
         placeName = (placeName ?? string.Empty).Trim();
         source = (source ?? string.Empty).Trim();
+        deviceInstallId = (deviceInstallId ?? string.Empty).Trim();
+        deviceName = (deviceName ?? string.Empty).Trim();
         if (string.IsNullOrEmpty(placeName) || string.IsNullOrEmpty(source))
             return;
 
@@ -344,10 +377,12 @@ public sealed class CustomerAccountRepository
 
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO NarrationPlay (CustomerUserId, PlaceName, Source, Language, DurationSeconds, PlayedAtUtc)
-            VALUES (@u, @p, @s, @l, @d, @t)
+            INSERT INTO NarrationPlay (CustomerUserId, DeviceInstallId, DeviceName, PlaceName, Source, Language, DurationSeconds, PlayedAtUtc)
+            VALUES (@u, @di, @dn, @p, @s, @l, @d, @t)
             """;
         cmd.Parameters.AddWithValue("@u", uid.HasValue ? uid.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("@di", string.IsNullOrWhiteSpace(deviceInstallId) ? DBNull.Value : deviceInstallId);
+        cmd.Parameters.AddWithValue("@dn", string.IsNullOrWhiteSpace(deviceName) ? DBNull.Value : deviceName);
         cmd.Parameters.AddWithValue("@p", placeName);
         cmd.Parameters.AddWithValue("@s", source);
         cmd.Parameters.AddWithValue("@l", language ?? (object)DBNull.Value);
@@ -364,7 +399,7 @@ public sealed class CustomerAccountRepository
         var list = new List<NarrationPlayRow>();
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = """
-            SELECT p.Id, p.CustomerUserId, p.PlaceName, p.Source, p.Language, p.DurationSeconds, p.PlayedAtUtc,
+            SELECT p.Id, p.CustomerUserId, p.DeviceInstallId, p.DeviceName, p.PlaceName, p.Source, p.Language, p.DurationSeconds, p.PlayedAtUtc,
                    u.PhoneOrEmail
             FROM NarrationPlay p
             LEFT JOIN CustomerUser u ON u.Id = p.CustomerUserId
@@ -378,12 +413,14 @@ public sealed class CustomerAccountRepository
             list.Add(new NarrationPlayRow(
                 r.GetInt32(0),
                 r.IsDBNull(1) ? null : r.GetInt32(1),
-                r.GetString(2),
-                r.GetString(3),
-                r.IsDBNull(4) ? null : r.GetString(4),
-                r.IsDBNull(5) ? null : r.GetDouble(5),
-                DateTime.TryParse(r.GetString(6), out var pt) ? pt : DateTime.MinValue,
-                r.IsDBNull(7) ? null : r.GetString(7)));
+                r.IsDBNull(2) ? null : r.GetString(2),
+                r.IsDBNull(3) ? null : r.GetString(3),
+                r.GetString(4),
+                r.GetString(5),
+                r.IsDBNull(6) ? null : r.GetString(6),
+                r.IsDBNull(7) ? null : r.GetDouble(7),
+                DateTime.TryParse(r.GetString(8), out var pt) ? pt : DateTime.MinValue,
+                r.IsDBNull(9) ? null : r.GetString(9)));
         }
 
         return list;
@@ -397,7 +434,7 @@ public sealed class CustomerAccountRepository
         var list = new List<NarrationPlayRow>();
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = """
-            SELECT p.Id, p.CustomerUserId, p.PlaceName, p.Source, p.Language, p.DurationSeconds, p.PlayedAtUtc,
+            SELECT p.Id, p.CustomerUserId, p.DeviceInstallId, p.DeviceName, p.PlaceName, p.Source, p.Language, p.DurationSeconds, p.PlayedAtUtc,
                    u.PhoneOrEmail
             FROM NarrationPlay p
             LEFT JOIN CustomerUser u ON u.Id = p.CustomerUserId
@@ -413,12 +450,55 @@ public sealed class CustomerAccountRepository
             list.Add(new NarrationPlayRow(
                 r.GetInt32(0),
                 r.IsDBNull(1) ? null : r.GetInt32(1),
-                r.GetString(2),
-                r.GetString(3),
-                r.IsDBNull(4) ? null : r.GetString(4),
-                r.IsDBNull(5) ? null : r.GetDouble(5),
-                DateTime.TryParse(r.GetString(6), out var pt) ? pt : DateTime.MinValue,
-                r.IsDBNull(7) ? null : r.GetString(7)));
+                r.IsDBNull(2) ? null : r.GetString(2),
+                r.IsDBNull(3) ? null : r.GetString(3),
+                r.GetString(4),
+                r.GetString(5),
+                r.IsDBNull(6) ? null : r.GetString(6),
+                r.IsDBNull(7) ? null : r.GetDouble(7),
+                DateTime.TryParse(r.GetString(8), out var pt) ? pt : DateTime.MinValue,
+                r.IsDBNull(9) ? null : r.GetString(9)));
+        }
+
+        return list;
+    }
+
+    public async Task<IReadOnlyList<NarrationPlayRow>> ListPlaysForDeviceAsync(string deviceInstallId, int take = 500)
+    {
+        deviceInstallId = (deviceInstallId ?? string.Empty).Trim();
+        if (deviceInstallId.Length < 8)
+            return [];
+
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        var list = new List<NarrationPlayRow>();
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT p.Id, p.CustomerUserId, p.DeviceInstallId, p.DeviceName, p.PlaceName, p.Source, p.Language, p.DurationSeconds, p.PlayedAtUtc,
+                   u.PhoneOrEmail
+            FROM NarrationPlay p
+            LEFT JOIN CustomerUser u ON u.Id = p.CustomerUserId
+            WHERE p.DeviceInstallId = @d
+            ORDER BY p.PlayedAtUtc DESC
+            LIMIT @lim
+            """;
+        cmd.Parameters.AddWithValue("@d", deviceInstallId);
+        cmd.Parameters.AddWithValue("@lim", take);
+        await using var r = await cmd.ExecuteReaderAsync();
+        while (await r.ReadAsync())
+        {
+            list.Add(new NarrationPlayRow(
+                r.GetInt32(0),
+                r.IsDBNull(1) ? null : r.GetInt32(1),
+                r.IsDBNull(2) ? null : r.GetString(2),
+                r.IsDBNull(3) ? null : r.GetString(3),
+                r.GetString(4),
+                r.GetString(5),
+                r.IsDBNull(6) ? null : r.GetString(6),
+                r.IsDBNull(7) ? null : r.GetDouble(7),
+                DateTime.TryParse(r.GetString(8), out var pt) ? pt : DateTime.MinValue,
+                r.IsDBNull(9) ? null : r.GetString(9)));
         }
 
         return list;
@@ -473,6 +553,48 @@ public sealed class CustomerAccountRepository
         await cmd.ExecuteNonQueryAsync();
     }
 
+    public async Task UpsertDeviceRouteSnapshotAsync(string deviceInstallId, string? deviceName, int? customerUserId, string pointsJson)
+    {
+        deviceInstallId = (deviceInstallId ?? string.Empty).Trim();
+        if (deviceInstallId.Length < 8)
+            return;
+        pointsJson ??= "[]";
+        deviceName = (deviceName ?? string.Empty).Trim();
+
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        int? uid = customerUserId;
+        if (uid.HasValue)
+        {
+            await using var ck = connection.CreateCommand();
+            ck.CommandText = "SELECT COUNT(1) FROM CustomerUser WHERE Id = @id";
+            ck.Parameters.AddWithValue("@id", uid.Value);
+            if (Convert.ToInt32(await ck.ExecuteScalarAsync()) == 0)
+                uid = null;
+        }
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO DeviceRouteSnapshot (DeviceInstallId, DeviceName, CustomerUserId, PointsJson, UpdatedAtUtc)
+            VALUES (@d, @n, @u, @j, @t)
+            ON CONFLICT(DeviceInstallId) DO UPDATE SET
+                DeviceName = CASE
+                    WHEN excluded.DeviceName IS NULL OR trim(excluded.DeviceName) = '' THEN DeviceRouteSnapshot.DeviceName
+                    ELSE excluded.DeviceName
+                END,
+                CustomerUserId = excluded.CustomerUserId,
+                PointsJson = excluded.PointsJson,
+                UpdatedAtUtc = excluded.UpdatedAtUtc
+            """;
+        cmd.Parameters.AddWithValue("@d", deviceInstallId);
+        cmd.Parameters.AddWithValue("@n", string.IsNullOrWhiteSpace(deviceName) ? DBNull.Value : deviceName);
+        cmd.Parameters.AddWithValue("@u", uid.HasValue ? uid.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("@j", pointsJson);
+        cmd.Parameters.AddWithValue("@t", DateTime.UtcNow.ToString("O"));
+        await cmd.ExecuteNonQueryAsync();
+    }
+
     public async Task<string?> GetRouteSnapshotJsonAsync(int customerUserId)
     {
         await using var connection = Open();
@@ -496,6 +618,95 @@ public sealed class CustomerAccountRepository
         cmd.CommandText = "DELETE FROM CustomerRouteSnapshot WHERE CustomerUserId = @id";
         cmd.Parameters.AddWithValue("@id", customerUserId);
         await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task<string?> GetRouteSnapshotJsonByDeviceAsync(string deviceInstallId)
+    {
+        deviceInstallId = (deviceInstallId ?? string.Empty).Trim();
+        if (deviceInstallId.Length < 8)
+            return null;
+
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT PointsJson FROM DeviceRouteSnapshot WHERE DeviceInstallId = @id LIMIT 1
+            """;
+        cmd.Parameters.AddWithValue("@id", deviceInstallId);
+        var o = await cmd.ExecuteScalarAsync();
+        return o as string;
+    }
+
+    public async Task<DeviceRouteSnapshotRow?> GetDeviceRouteSnapshotAsync(string deviceInstallId)
+    {
+        deviceInstallId = (deviceInstallId ?? string.Empty).Trim();
+        if (deviceInstallId.Length < 8)
+            return null;
+
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT d.DeviceInstallId, d.DeviceName, d.CustomerUserId, u.FullName, u.PhoneOrEmail, d.UpdatedAtUtc
+            FROM DeviceRouteSnapshot d
+            LEFT JOIN CustomerUser u ON u.Id = d.CustomerUserId
+            WHERE d.DeviceInstallId = @id
+            LIMIT 1
+            """;
+        cmd.Parameters.AddWithValue("@id", deviceInstallId);
+        await using var r = await cmd.ExecuteReaderAsync();
+        if (!await r.ReadAsync())
+            return null;
+
+        return new DeviceRouteSnapshotRow(
+            r.GetString(0),
+            r.IsDBNull(1) ? null : r.GetString(1),
+            r.IsDBNull(2) ? null : r.GetInt32(2),
+            r.IsDBNull(3) ? null : r.GetString(3),
+            r.IsDBNull(4) ? null : r.GetString(4),
+            DateTime.TryParse(r.GetString(5), out var dt) ? dt : DateTime.MinValue);
+    }
+
+    public async Task<IReadOnlyList<CustomerDeviceRow>> ListCustomerDevicesAsync()
+    {
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        var list = new List<CustomerDeviceRow>();
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT d.DeviceInstallId,
+                   COALESCE(NULLIF(trim(d.DeviceName), ''), NULLIF(trim(h.Platform), ''), 'Thiết bị') AS DeviceName,
+                   d.CustomerUserId,
+                   u.FullName,
+                   u.PhoneOrEmail,
+                   d.UpdatedAtUtc,
+                   h.LastSeenUtc,
+                   h.Platform,
+                   h.AppVersion
+            FROM DeviceRouteSnapshot d
+            LEFT JOIN CustomerUser u ON u.Id = d.CustomerUserId
+            LEFT JOIN AppDeviceHeartbeat h ON h.DeviceInstallId = d.DeviceInstallId
+            ORDER BY datetime(COALESCE(h.LastSeenUtc, d.UpdatedAtUtc)) DESC
+            """;
+        await using var r = await cmd.ExecuteReaderAsync();
+        while (await r.ReadAsync())
+        {
+            list.Add(new CustomerDeviceRow(
+                r.GetString(0),
+                r.IsDBNull(1) ? "Thiết bị" : r.GetString(1),
+                r.IsDBNull(2) ? null : r.GetInt32(2),
+                r.IsDBNull(3) ? null : r.GetString(3),
+                r.IsDBNull(4) ? null : r.GetString(4),
+                DateTime.TryParse(r.GetString(5), out var up) ? up : DateTime.MinValue,
+                r.IsDBNull(6) ? null : DateTime.TryParse(r.GetString(6), out var ls) ? ls : null,
+                r.IsDBNull(7) ? null : r.GetString(7),
+                r.IsDBNull(8) ? null : r.GetString(8)));
+        }
+
+        return list;
     }
 
     /// <summary>Tổng lượt phát theo địa điểm và nguồn (QR, Map, …).</summary>
@@ -561,7 +772,7 @@ public sealed class CustomerAccountRepository
         var list = new List<NarrationPlayRow>();
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = """
-            SELECT p.Id, p.CustomerUserId, p.PlaceName, p.Source, p.Language, p.DurationSeconds, p.PlayedAtUtc,
+            SELECT p.Id, p.CustomerUserId, p.DeviceInstallId, p.DeviceName, p.PlaceName, p.Source, p.Language, p.DurationSeconds, p.PlayedAtUtc,
                    u.PhoneOrEmail
             FROM NarrationPlay p
             LEFT JOIN CustomerUser u ON u.Id = p.CustomerUserId
@@ -577,12 +788,14 @@ public sealed class CustomerAccountRepository
             list.Add(new NarrationPlayRow(
                 r.GetInt32(0),
                 r.IsDBNull(1) ? null : r.GetInt32(1),
-                r.GetString(2),
-                r.GetString(3),
-                r.IsDBNull(4) ? null : r.GetString(4),
-                r.IsDBNull(5) ? null : r.GetDouble(5),
-                DateTime.TryParse(r.GetString(6), out var pt) ? pt : DateTime.MinValue,
-                r.IsDBNull(7) ? null : r.GetString(7)));
+                r.IsDBNull(2) ? null : r.GetString(2),
+                r.IsDBNull(3) ? null : r.GetString(3),
+                r.GetString(4),
+                r.GetString(5),
+                r.IsDBNull(6) ? null : r.GetString(6),
+                r.IsDBNull(7) ? null : r.GetDouble(7),
+                DateTime.TryParse(r.GetString(8), out var pt) ? pt : DateTime.MinValue,
+                r.IsDBNull(9) ? null : r.GetString(9)));
         }
 
         return list;
@@ -811,6 +1024,8 @@ public sealed record CustomerUserRow(int Id, string FullName, string PhoneOrEmai
 public sealed record NarrationPlayRow(
     int Id,
     int? CustomerUserId,
+    string? DeviceInstallId,
+    string? DeviceName,
     string PlaceName,
     string Source,
     string? Language,
@@ -835,5 +1050,24 @@ public sealed record DevicePresenceRow(
     string DeviceInstallId,
     DateTime LastSeenUtc,
     bool IsOnMapTab,
+    string? Platform,
+    string? AppVersion);
+
+public sealed record DeviceRouteSnapshotRow(
+    string DeviceInstallId,
+    string? DeviceName,
+    int? CustomerUserId,
+    string? CustomerFullName,
+    string? CustomerPhoneOrEmail,
+    DateTime UpdatedAtUtc);
+
+public sealed record CustomerDeviceRow(
+    string DeviceInstallId,
+    string DeviceName,
+    int? CustomerUserId,
+    string? CustomerFullName,
+    string? CustomerPhoneOrEmail,
+    DateTime RouteUpdatedAtUtc,
+    DateTime? LastSeenUtc,
     string? Platform,
     string? AppVersion);

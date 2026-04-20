@@ -329,20 +329,36 @@ public static class NarrationQueueService
                 _ => PickLocaleByPriority(localeList, "vi")
             };
 
-            // Chế độ strict theo ngôn ngữ người dùng đã chọn:
-            // không tự rơi sang ngôn ngữ khác vì dễ gây "chọn A đọc B".
-            if (pick is null)
-                return false;
+            if (pick is not null)
+            {
+                var okWithPreferred = await SpeakWithTimeoutAsync(
+                    text,
+                    new SpeechOptions
+                    {
+                        Locale = pick,
+                        Pitch = 1.0f,
+                        Volume = 1.0f
+                    },
+                    cancellationToken).ConfigureAwait(false);
+                if (okWithPreferred)
+                    return true;
+            }
 
-            return await SpeakWithTimeoutAsync(
+            // Fallback bắt buộc: nhiều máy chỉ có voice English mặc định.
+            // Vẫn phát TTS bằng voice mặc định thay vì im tiếng hoàn toàn.
+            var okWithDefault = await SpeakWithTimeoutAsync(
                 text,
                 new SpeechOptions
                 {
-                    Locale = pick,
                     Pitch = 1.0f,
                     Volume = 1.0f
                 },
                 cancellationToken).ConfigureAwait(false);
+            if (okWithDefault)
+                return true;
+
+            // Thử thêm lần cuối không options để tăng tương thích thiết bị Android cũ.
+            return await SpeakWithTimeoutAsync(text, null, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
