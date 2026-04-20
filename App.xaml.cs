@@ -1,21 +1,21 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Networking;
-using Microsoft.Maui.Storage;
 using TourGuideApp2.Services;
 
 namespace TourGuideApp2
 {
     public partial class App : Application
     {
+        private static readonly DateTime StartedUtc = DateTime.UtcNow;
+
         public App()
         {
             InitializeComponent();
 
-            // Một lần sau khi cài bản không bắt đăng nhập: xóa session cũ để không kẹt trạng thái từ APK trước.
-            const string guestShellMigration = "TourGuestNoLoginShell_v1";
-            if (!Preferences.Default.Get(guestShellMigration, false))
+            try
             {
+                // App khách: không giữ phiên đăng nhập — mỗi lần mở app là trạng thái khách (tránh màn/form đăng nhập cũ).
                 try
                 {
                     AuthService.Logout();
@@ -25,21 +25,23 @@ namespace TourGuideApp2
                     // bỏ qua
                 }
 
-                Preferences.Default.Set(guestShellMigration, true);
+                Connectivity.ConnectivityChanged += (_, _) =>
+                {
+                    try
+                    {
+                        if (Connectivity.Current.NetworkAccess == NetworkAccess.Internet)
+                            _ = PlaySyncService.FlushPendingAsync();
+                    }
+                    catch
+                    {
+                        // Không để sự kiện mạng làm văng app.
+                    }
+                };
             }
-
-            Connectivity.ConnectivityChanged += (_, _) =>
+            catch (Exception ex)
             {
-                try
-                {
-                    if (Connectivity.Current.NetworkAccess == NetworkAccess.Internet)
-                        _ = PlaySyncService.FlushPendingAsync();
-                }
-                catch
-                {
-                    // Không để sự kiện mạng làm văng app.
-                }
-            };
+                System.Diagnostics.Debug.WriteLine($"App ctor: {ex}");
+            }
         }
 
         protected override Window CreateWindow(IActivationState? activationState)
@@ -74,10 +76,11 @@ namespace TourGuideApp2
 
         protected override void OnSleep()
         {
-            // Ra khỏi app (Home / đa nhiệm / vuốt tắt) — báo offline ngay để CMS F5 đúng trạng thái.
+            // Vài thiết bị gọi OnSleep cực sớm khi vừa mở app — gọi HTTP lúc đó dễ race → văng process.
             try
             {
-                _ = DeviceHeartbeatService.NotifyMapTabLeftAsync();
+                if ((DateTime.UtcNow - StartedUtc).TotalSeconds >= 3.0)
+                    _ = DeviceHeartbeatService.NotifyMapTabLeftAsync();
             }
             catch
             {

@@ -249,6 +249,15 @@ public partial class MapPage : ContentPage
         return string.Empty;
     }
 
+    /// <summary>Rút gọn text đưa vào HTML/WebView — tránh OOM/crash WebView trên máy RAM thấp khi POI có đoạn thuyết minh rất dài.</summary>
+    private static string TruncateForMapEmbed(string? text, int maxChars)
+    {
+        var s = (text ?? string.Empty).Trim();
+        if (s.Length <= maxChars)
+            return s;
+        return s[..maxChars] + "…";
+    }
+
     private static string PickNarrationText(Place place, string? lang)
     {
         var normalizedLang = (lang ?? "vi").Trim().ToLowerInvariant();
@@ -259,6 +268,26 @@ public partial class MapPage : ContentPage
             "ja" => FirstNonEmpty(place.JapaneseAudioText),
             _ => FirstNonEmpty(place.VietnameseAudioText)
         };
+    }
+
+    /// <summary>
+    /// Khi API chỉ có bản tiếng Việt: máy chọn EN/ZH/JA vẫn nghe được — đọc bản VI với TTS/locale <c>vi</c> (khớp file <c>poi_*.mp3</c> trong gói).
+    /// </summary>
+    private static (string Text, string TtsLang) ResolveNarrationForPlayback(Place place, string? requestedLang)
+    {
+        var ui = (requestedLang ?? "vi").Trim().ToLowerInvariant();
+        var text = PickNarrationText(place, ui);
+        if (!string.IsNullOrWhiteSpace(text))
+            return (text, ui);
+
+        if (ui is "en" or "zh" or "ja")
+        {
+            var vi = FirstNonEmpty(place.VietnameseAudioText);
+            if (!string.IsNullOrWhiteSpace(vi))
+                return (vi, "vi");
+        }
+
+        return (string.Empty, ui);
     }
 
     /// <summary>TTS ngắn khi bấm Chỉ đường — không phát file thuyết minh dài của POI.</summary>
@@ -456,19 +485,35 @@ public partial class MapPage : ContentPage
 
         try
         {
-            // Tự động đồng bộ log lượt phát thuyết minh ngay khi vào MapPage
-            await AutoSyncPlaybackLogsAsync();
+            // Không await — tránh chặn luồng UI / race với WebView khi cold start (cài mới, vừa quét QR).
+            _ = AutoSyncPlaybackLogsAsync();
 
-            // Các lệnh cũ giữ nguyên (chạy nền không chặn UI)
+            if (OperatingSystem.IsAndroid())
+                await Task.Delay(280);
+
             _ = SafeLoadMapAsync();
             _ = TryStartForegroundGpsListeningAsync();
             _ = PlayWelcomeMessageAsync();
 
-            DeviceHeartbeatService.StartMapTabSession();
+            _ = DelayedStartMapHeartbeatAsync();
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"MapPage.OnAppearing: {ex}");
+        }
+    }
+
+    /// <summary>Trì ping CMS một chút sau khi Activity/WebView khởi tạo — giảm crash khi thiết bị yếu hoặc vừa cài APK.</summary>
+    private static async Task DelayedStartMapHeartbeatAsync()
+    {
+        try
+        {
+            await Task.Delay(650);
+            DeviceHeartbeatService.StartMapTabSession();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"DelayedStartMapHeartbeatAsync: {ex.Message}");
         }
     }
 
@@ -480,18 +525,27 @@ public partial class MapPage : ContentPage
         }
         catch (Exception ex)
         {
-            mapView.Source = new HtmlWebViewSource
+            try
             {
-                Html = $"""
-                <html>
-                  <body style="font-family:Arial,Helvetica,sans-serif;background:#fafafa;color:#222;padding:16px;">
-                    <h3>Khong tai duoc ban do</h3>
-                    <p>Vui long mo lai tab Ban do hoac khoi dong lai app.</p>
-                    <pre style="white-space:pre-wrap;background:#fff;border:1px solid #ddd;padding:8px;border-radius:8px;">{System.Net.WebUtility.HtmlEncode(ex.Message)}</pre>
-                  </body>
-                </html>
-                """
-            };
+                if (mapView is null)
+                    return;
+                mapView.Source = new HtmlWebViewSource
+                {
+                    Html = $"""
+                    <html>
+                      <body style="font-family:Arial,Helvetica,sans-serif;background:#fafafa;color:#222;padding:16px;">
+                        <h3>Khong tai duoc ban do</h3>
+                        <p>Vui long mo lai tab Ban do hoac khoi dong lai app.</p>
+                        <pre style="white-space:pre-wrap;background:#fff;border:1px solid #ddd;padding:8px;border-radius:8px;">{System.Net.WebUtility.HtmlEncode(ex.Message)}</pre>
+                      </body>
+                    </html>
+                    """
+                };
+            }
+            catch (Exception inner)
+            {
+                Debug.WriteLine($"SafeLoadMapAsync fallback UI: {inner.Message}");
+            }
         }
     }
 
@@ -554,16 +608,16 @@ public partial class MapPage : ContentPage
             poiDtos.Add(new
             {
                 id = p.Id,
-                name = p.Name,
+                name = TruncateForMapEmbed(p.Name, 200),
                 lat = p.Latitude,
                 lng = p.Longitude,
-                img = p.ImageUrl,
-                mapUrl = p.MapUrl,
-                description = p.Description,
-                viText = p.VietnameseAudioText,
-                enText = p.EnglishAudioText,
-                zhText = p.ChineseAudioText,
-                jaText = p.JapaneseAudioText,
+                img = TruncateForMapEmbed(p.ImageUrl, 2000),
+                mapUrl = TruncateForMapEmbed(p.MapUrl, 2000),
+                description = TruncateForMapEmbed(p.Description, 900),
+                viText = TruncateForMapEmbed(p.VietnameseAudioText, 1600),
+                enText = TruncateForMapEmbed(p.EnglishAudioText, 1600),
+                zhText = TruncateForMapEmbed(p.ChineseAudioText, 1600),
+                jaText = TruncateForMapEmbed(p.JapaneseAudioText, 1600),
                 premiumPrice = p.PremiumPriceDemo
             });
         }
@@ -579,13 +633,25 @@ public partial class MapPage : ContentPage
         };
         var busStopJsArray = string.Join(",", busStopDtos.Select(x => JsonSerializer.Serialize(x)));
         var routePoints = await RouteTrackService.GetPointsAsync();
+        const int maxRoutePointsForMap = 900;
+        if (routePoints.Count > maxRoutePointsForMap)
+            routePoints = routePoints.Skip(routePoints.Count - maxRoutePointsForMap).ToList();
+
         var routeJsArray = string.Join(",", routePoints.Select(x => JsonSerializer.Serialize(new
         {
             lat = x.Latitude,
             lng = x.Longitude
         })));
 
-        var hasInternet = Connectivity.Current.NetworkAccess == NetworkAccess.Internet;
+        bool hasInternet;
+        try
+        {
+            hasInternet = Connectivity.Current.NetworkAccess == NetworkAccess.Internet;
+        }
+        catch
+        {
+            hasInternet = true;
+        }
         // Chỉ dùng danh sách HTML khi *không* có Internet (CDN Leaflet không tải được).
         // Có 4G/Wi‑Fi nhưng API CMS không tới (mạng khác): vẫn bản đồ Leaflet + POI đã load từ SQLite — geofence / bấm nghe giống hình 2.
         var useOfflineEmbeddedMap = !hasInternet;
@@ -1762,7 +1828,27 @@ for (var i = 0; i < pois.length; i++) {{
 
     private void OnQrScanned(string rawValue)
     {
-        MainThread.BeginInvokeOnMainThread(async () => await HandleQrScanAsync(rawValue));
+        _ = ProcessQrScanSafeAsync(rawValue);
+    }
+
+    private async Task ProcessQrScanSafeAsync(string rawValue)
+    {
+        try
+        {
+            await HandleQrScanAsync(rawValue);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"ProcessQrScanSafeAsync: {ex}");
+            try
+            {
+                await DisplayAlertAsync("Lỗi xử lý mã QR", ex.Message, "OK");
+            }
+            catch
+            {
+                // Bỏ qua nếu UI không còn hợp lệ.
+            }
+        }
     }
 
     private async Task HandleQrScanAsync(string rawValue)
@@ -1791,7 +1877,7 @@ for (var i = 0; i < pois.length; i++) {{
         if (!await EnsurePoiListenPaidAsync(place))
             return;
 
-        var text = PickNarrationText(place, _selectedLanguage);
+        var (text, ttsLang) = ResolveNarrationForPlayback(place, _selectedLanguage);
 
         if (!string.IsNullOrWhiteSpace(text))
         {
@@ -1800,9 +1886,9 @@ for (var i = 0; i < pois.length; i++) {{
             try
             {
                 var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(
-                    poiIndex, _selectedLanguage, text, default, place.Id > 0 ? place.Id : null);
+                    poiIndex, ttsLang, text, default, place.Id > 0 ? place.Id : null);
                 UpdateLastPlayedLabel(place.Name, "QR");
-                PlaySyncService.Enqueue(place.Name, "QR", _selectedLanguage, durationSeconds, DateTime.Now);
+                PlaySyncService.Enqueue(place.Name, "QR", ttsLang, durationSeconds, DateTime.Now);
             }
             catch (OperationCanceledException)
             {
@@ -1814,7 +1900,14 @@ for (var i = 0; i < pois.length; i++) {{
             await HistoryLogService.AddAsync(place.Name, "QR", _selectedLanguage);
         }
 
-        await mapView.EvaluateJavaScriptAsync($"window.openPoiById && window.openPoiById({poiId});");
+        try
+        {
+            await mapView.EvaluateJavaScriptAsync($"window.openPoiById && window.openPoiById({poiId});");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"openPoiById JS: {ex}");
+        }
         // Theo yêu cầu "quét là nghe ngay", không chặn luồng bằng popup success.
     }
 
@@ -2016,6 +2109,7 @@ for (var i = 0; i < pois.length; i++) {{
     private async Task CheckProximityAndSpeakAsync()
     {
         string? textToSpeak = null;
+        var speakTtsLang = _selectedLanguage;
         int speakPoiIndex = -1;
         Place? speakPlace = null;
         CancellationTokenSource? speakCts = null;
@@ -2175,7 +2269,7 @@ for (var i = 0; i < pois.length; i++) {{
                 return;
             }
 
-            var text = PickNarrationText(nearestPlace, _selectedLanguage);
+            var (text, ttsLang) = ResolveNarrationForPlayback(nearestPlace, _selectedLanguage);
 
             if (string.IsNullOrWhiteSpace(text))
             {
@@ -2198,6 +2292,7 @@ for (var i = 0; i < pois.length; i++) {{
             speakCts = new CancellationTokenSource();
             _proximityTtsCts = speakCts;
             textToSpeak = text;
+            speakTtsLang = ttsLang;
             speakPoiIndex = candidateIndex;
             speakPlace = nearestPlace;
             UpdateGeoStatusLabel($"Đang trong vùng: {nearestPlace.Name}");
@@ -2226,13 +2321,13 @@ for (var i = 0; i < pois.length; i++) {{
         try
         {
             var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(
-                speakPoiIndex, _selectedLanguage, textToSpeak, token, speakPlace.Id > 0 ? speakPlace.Id : null);
+                speakPoiIndex, speakTtsLang, textToSpeak, token, speakPlace.Id > 0 ? speakPlace.Id : null);
             RegisterAutoGeoPlaybackCompleted(speakPoiIndex);
             UpdateLastPlayedLabel(speakPlace.Name, "AutoGeo");
             UpdateCooldownLabel(speakPoiIndex);
             if (ShouldLogAutoGeo(speakPoiIndex))
             {
-                PlaySyncService.Enqueue(speakPlace.Name, "AutoGeo", _selectedLanguage, durationSeconds, DateTime.Now);
+                PlaySyncService.Enqueue(speakPlace.Name, "AutoGeo", speakTtsLang, durationSeconds, DateTime.Now);
             }
         }
         catch (OperationCanceledException)
@@ -2902,14 +2997,14 @@ for (var i = 0; i < pois.length; i++) {{
             if (!await EnsurePoiListenPaidAsync(place))
                 return;
 
-            var text = PickNarrationText(place, speakLang);
+            var (text, ttsLang) = ResolveNarrationForPlayback(place, speakLang);
 
             CancelProximitySpeech();
             CancelBusStopSpeech();
             var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(
-                poiIndex, speakLang, text ?? "", default, place.Id > 0 ? place.Id : null);
+                poiIndex, ttsLang, text ?? "", default, place.Id > 0 ? place.Id : null);
             UpdateLastPlayedLabel(place.Name, "Map");
-            PlaySyncService.Enqueue(place.Name, "Map", speakLang, durationSeconds, DateTime.Now);
+            PlaySyncService.Enqueue(place.Name, "Map", ttsLang, durationSeconds, DateTime.Now);
         }
         catch { }
     }

@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -61,33 +62,6 @@ app.MapGet("/api/ping", () => Results.Json(new
     utc = DateTime.UtcNow.ToString("O")
 }));
 
-static string? BuildLocalApkDownloadUrl(HttpContext http, IConfiguration config, IWebHostEnvironment env)
-{
-    var apkPath = ApkLocator.FindPreferredApkPath(env);
-    if (string.IsNullOrWhiteSpace(apkPath) || !System.IO.File.Exists(apkPath))
-        return null;
-
-    var version = ApkLocator.CacheBusterForPath(apkPath);
-    return $"{PublicSiteUrls.SiteRootForLinks(http, config)}/downloads/AmThucVinhKhanh.apk?v={version}";
-}
-
-static string? ResolveInstallTargetUrl(HttpContext http, IConfiguration config, IWebHostEnvironment env)
-{
-    // 1) Link public cấu hình sẵn (store/APK public)
-    var direct = (config["App:AppDownloadUrl"] ?? "").Trim();
-    if (!string.IsNullOrEmpty(direct)
-        && Uri.TryCreate(direct, UriKind.Absolute, out var u)
-        && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps))
-        return direct;
-
-    // 2) APK local trong CMS
-    var localApkUrl = BuildLocalApkDownloadUrl(http, config, env);
-    if (!string.IsNullOrWhiteSpace(localApkUrl))
-        return localApkUrl;
-
-    return null;
-}
-
 // API JSON cho app MAUI (PostgREST-style): cấu hình URL trong app trỏ tới https://.../api/places
 app.MapGet("/api/places", async (HttpContext http, PlaceRepository repo, IConfiguration config) =>
 {
@@ -137,7 +111,7 @@ app.MapGet("/qr/places/{id:int}", async (HttpContext http, int id, PlaceReposito
 // APK local (LAN): đặt file tại wwwroot/downloads/AmThucVinhKhanh.apk để điện thoại quét QR là bật prompt tải/cài.
 app.MapGet("/downloads/AmThucVinhKhanh.apk", (HttpContext http, IWebHostEnvironment env) =>
 {
-    var apkPath = ApkLocator.FindPreferredApkPath(env);
+    var apkPath = ApkLocator.FindPreferredApkPath(env, http.RequestServices.GetRequiredService<IConfiguration>());
     if (string.IsNullOrWhiteSpace(apkPath) || !System.IO.File.Exists(apkPath))
         return Results.NotFound("Thiếu file APK. Đặt file .apk vào TourGuideCMS/wwwroot/downloads/ hoặc build Android APK.");
 
@@ -146,62 +120,75 @@ app.MapGet("/downloads/AmThucVinhKhanh.apk", (HttpContext http, IWebHostEnvironm
     http.Response.Headers.Pragma = "no-cache";
     http.Response.Headers.Expires = "0";
 
-    // Dùng octet-stream + filename để nhiều webview buộc tải file thay vì render trắng.
-    return Results.File(apkPath, "application/octet-stream", "AmThucVinhKhanh.apk");
+    var v = ApkLocator.CacheBusterForPath(apkPath);
+    var safeName = $"AmThucVinhKhanh_{v}.apk".Replace(':', '_');
+
+    // Dùng octet-stream + filename duy nhất theo build để Download Manager Android ít gộp nhầm bản cũ.
+    return Results.File(apkPath, "application/octet-stream", safeName);
 });
 
-// Route trung gian cho QR tải app: nếu có target cài đặt thì redirect thẳng.
+// Trang HTML «Đang mở cài đặt…» — quét QR mở đây rồi bấm tải (Zalo/WebView không nên 302 thẳng file .apk).
 app.MapGet("/install/launch", (HttpContext http, IConfiguration config, IWebHostEnvironment env) =>
 {
-    var target = ResolveInstallTargetUrl(http, config, env);
+    http.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate, max-age=0";
+    http.Response.Headers.Pragma = "no-cache";
+    http.Response.Headers.Expires = "0";
+
+    var target = InstallTargetUrlResolver.Resolve(http, config, env);
     if (string.IsNullOrWhiteSpace(target))
-        return Results.Redirect("/Install?fromQr=1");
+        return Results.Redirect("/Install");
 
-    var encodedTarget = Uri.EscapeDataString(target);
-    var fallback = Uri.EscapeDataString($"{PublicSiteUrls.SiteRootForLinks(http, config)}/Install?fromQr=1");
-    var noScheme = target.Replace("https://", "", StringComparison.OrdinalIgnoreCase)
-                         .Replace("http://", "", StringComparison.OrdinalIgnoreCase);
-    var intentScheme = target.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "https" : "http";
-    var intentUrl = $"intent://{noScheme}#Intent;scheme={intentScheme};package=com.android.chrome;S.browser_fallback_url={fallback};end";
-    var encodedIntent = Uri.EscapeDataString(intentUrl);
-    var setupDeepLink = $"amthucvinhkhanh://setup?base={Uri.EscapeDataString(PublicSiteUrls.SiteRootForLinks(http, config))}";
-    var encodedSetup = Uri.EscapeDataString(setupDeepLink);
+    var siteRoot = PublicSiteUrls.SiteRootForLinks(http, config);
+    var setupDeepLink = $"amthucvinhkhanh://setup?base={Uri.EscapeDataString(siteRoot)}";
+    var installPage = $"{siteRoot}/Install";
 
-    var html = $@"
-<!doctype html>
-<html>
+    var href = WebUtility.HtmlEncode(target);
+    var chromeIntent = WebUtility.HtmlEncode(InstallLaunchLinks.ChromeViewIntentOrFallback(target));
+    var setupEsc = WebUtility.HtmlEncode(setupDeepLink);
+    var installEsc = WebUtility.HtmlEncode(installPage);
+
+    var apkPathResolved = ApkLocator.FindPreferredApkPath(env, config);
+    string sizeLine = "";
+    if (!string.IsNullOrWhiteSpace(apkPathResolved) && System.IO.File.Exists(apkPathResolved))
+    {
+        var mb = new System.IO.FileInfo(apkPathResolved).Length / (1024.0 * 1024.0);
+        sizeLine = $@"<p class=""dim"">Gói cài đặt hiện tại: ~{mb:0.#} MB (cùng file CMS phục vụ QR).</p>";
+    }
+
+    var expectedVer = (config["App:ExpectedAppVersion"] ?? "").Trim();
+    var versionLine = string.IsNullOrEmpty(expectedVer)
+        ? ""
+        : $@"<p class=""dim"">Phiên bản build mục tiêu: <strong>{WebUtility.HtmlEncode(expectedVer)}</strong></p>";
+
+    var html = $@"<!DOCTYPE html>
+<html lang=""vi"">
 <head>
-  <meta charset=""utf-8"" />
-  <meta name=""viewport"" content=""width=device-width, initial-scale=1"" />
-  <title>Đang mở cài đặt ứng dụng...</title>
+  <meta charset=""utf-8""/>
+  <meta name=""viewport"" content=""width=device-width, initial-scale=1""/>
+  <title>Đang mở cài đặt ứng dụng…</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; max-width: 480px; margin: 0 auto; background: #fff; color: #212121; }}
+    h1 {{ font-size: 1.2rem; font-weight: 600; margin: 0 0 12px 0; }}
+    p {{ margin: 10px 0; line-height: 1.5; }}
+    .dim {{ color: #616161; font-size: 0.9rem; }}
+    a.primary {{ color: #1565c0; font-size: 1.05rem; }}
+    a.secondary {{ color: #1565c0; font-size: 1.05rem; }}
+    .more {{ margin-top: 22px; padding-top: 16px; border-top: 1px solid #e0e0e0; font-size: 0.88rem; color: #546e7a; }}
+    .btn {{ display: inline-block; margin-top: 8px; padding: 12px 16px; background: #00897b; color: #fff !important; text-decoration: none; border-radius: 10px; font-weight: 600; }}
+  </style>
 </head>
-<body style=""font-family: Arial, sans-serif; padding: 16px;"">
-  <p>Đang mở cài đặt ứng dụng...</p>
+<body>
+  <h1>Đang mở cài đặt ứng dụng…</h1>
   <p>Nếu không tự chuyển, dùng các nút bên dưới:</p>
-  <p><a href=""{target}"">Tải / cài đặt app</a></p>
-  <p><a href=""{intentUrl}"">Mở bằng Chrome</a></p>
-  <p><a href=""{setupDeepLink}"">Mở app và tự cấu hình đồng bộ</a></p>
-  <script>
-    (function () {{
-      var ua = navigator.userAgent || '';
-      var isAndroid = /Android/i.test(ua);
-      if (isAndroid) {{
-        try {{ window.location.href = decodeURIComponent('{encodedIntent}'); }} catch(e) {{}}
-      }}
-      setTimeout(function() {{
-        try {{ window.location.href = decodeURIComponent('{encodedTarget}'); }} catch(e) {{}}
-      }}, 500);
-
-      // Sau khi cài xong, nhiều máy quay lại trình duyệt thay vì tự mở app.
-      // Thử gọi deeplink setup định kỳ để app nhận URL CMS mà không cần màn Cài đặt.
-      var tries = 0;
-      var timer = setInterval(function() {{
-        tries++;
-        if (tries > 45) {{ clearInterval(timer); return; }}
-        try {{ window.location.href = decodeURIComponent('{encodedSetup}'); }} catch(e) {{}}
-      }}, 2000);
-    }})();
-  </script>
+  <p><a class=""primary"" href=""{href}"">Tải / cài đặt app</a></p>
+  <p><a class=""secondary"" href=""{chromeIntent}"">Mở bằng Chrome</a> <span class=""dim"">(nếu đang mở trong Zalo / Facebook)</span></p>
+  {sizeLine}
+  {versionLine}
+  <p class=""dim"">Không có màn đăng nhập email trong app khách — tab <strong>Khám phá</strong> &amp; <strong>Dùng app trực tiếp</strong>. Nếu vẫn thấy form đăng nhập: gỡ app cũ và tải lại bản này.</p>
+  <div class=""more"">
+    <p>Sau khi cài: <a class=""btn"" href=""{setupEsc}"">Mở app &amp; gán URL CMS</a></p>
+    <p><a href=""{installEsc}"">Trang Install đầy đủ</a> · trong app: Cài đặt → URL API nếu cần.</p>
+  </div>
 </body>
 </html>";
     return Results.Content(html, "text/html; charset=utf-8");
@@ -234,13 +221,13 @@ app.MapPost("/api/install/upload-apk", async (HttpRequest req, IWebHostEnvironme
     return Results.Redirect("/Install?uploaded=1");
 });
 
-// QR PNG tải app: mở route /install/launch để nhảy thẳng luồng cài đặt nếu có APK/link.
+// QR PNG tải app: nội dung = /install/launch?v=… — quét = trang «Đang mở cài đặt…» (hình 2), nút tải dùng Resolve (~130MB).
 app.MapGet("/qr/app", (HttpContext http, IConfiguration config, IWebHostEnvironment env) =>
 {
     http.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate, max-age=0";
     http.Response.Headers.Pragma = "no-cache";
 
-    var content = PublicSiteUrls.QrAppInstallLaunchUrl(http, config);
+    var content = PublicSiteUrls.QrAppInstallLaunchPayload(http, config, env);
 
     using var gen = new QRCodeGenerator();
     using var data = gen.CreateQrCode(content, QRCodeGenerator.ECCLevel.Q);
@@ -250,9 +237,9 @@ app.MapGet("/qr/app", (HttpContext http, IConfiguration config, IWebHostEnvironm
 });
 
 // Chẩn đoán nhanh: xem CMS đang phục vụ APK nào cho QR.
-app.MapGet("/api/install/apk-info", (IWebHostEnvironment env) =>
+app.MapGet("/api/install/apk-info", (IWebHostEnvironment env, IConfiguration cfg) =>
 {
-    var apkPath = ApkLocator.FindPreferredApkPath(env);
+    var apkPath = ApkLocator.FindPreferredApkPath(env, cfg);
     if (string.IsNullOrWhiteSpace(apkPath) || !System.IO.File.Exists(apkPath))
         return Results.NotFound(new { message = "Không tìm thấy APK." });
 
@@ -261,7 +248,10 @@ app.MapGet("/api/install/apk-info", (IWebHostEnvironment env) =>
     {
         path = fi.FullName,
         bytes = fi.Length,
-        lastWriteUtc = fi.LastWriteTimeUtc.ToString("O")
+        lastWriteUtc = fi.LastWriteTimeUtc.ToString("O"),
+        preferUploadedCanonical = cfg.GetValue("App:QrApkPreferUploadedCanonical", false),
+        excludeSolutionBin = cfg.GetValue("App:QrApkExcludeSolutionBin", true),
+        minimumBytes = cfg.GetValue<long?>("App:QrApkMinimumBytes") ?? 0
     });
 });
 
@@ -461,6 +451,36 @@ app.MapPost("/api/devices/heartbeat", async (HttpRequest req, CustomerAccountRep
     var onMapTab = body.IsOnMapTab == true;
     await repo.UpsertDeviceHeartbeatAsync(body.DeviceInstallId, body.Platform, body.AppVersion, onMapTab);
     return Results.Ok(new { ok = true });
+});
+
+// Danh sách thiết bị + trạng thái online (app MAUI đồng bộ với /Devices/Online).
+app.MapGet("/api/devices/presence", async (HttpRequest req, CustomerAccountRepository repo, IConfiguration config) =>
+{
+    if (!MobileKeyOk(req, config))
+        return Results.Unauthorized();
+
+    var onlineWindow = TimeSpan.FromMinutes(2);
+    var cutoffUtc = DateTime.UtcNow - onlineWindow;
+    var rows = await repo.ListDevicePresenceAsync(500);
+    var devices = rows.Select(d => new
+    {
+        deviceInstallId = d.DeviceInstallId,
+        lastSeenUtc = d.LastSeenUtc.ToString("O"),
+        isOnMapTab = d.IsOnMapTab,
+        platform = d.Platform,
+        appVersion = d.AppVersion,
+        isOnlineOnMap = d.IsOnMapTab && d.LastSeenUtc >= cutoffUtc
+    }).ToList();
+
+    var onlineCount = devices.Count(x => x.isOnlineOnMap);
+    return Results.Json(new
+    {
+        serverUtc = DateTime.UtcNow.ToString("O"),
+        onlineWindowSeconds = (int)onlineWindow.TotalSeconds,
+        onlineCount,
+        offlineCount = devices.Count - onlineCount,
+        devices
+    });
 });
 
 app.MapRazorPages();

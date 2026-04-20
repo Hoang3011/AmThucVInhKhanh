@@ -58,6 +58,56 @@
 
             <Border
                 BackgroundColor="White"
+                Stroke="#E0E0E0"
+                StrokeThickness="1"
+                Padding="12">
+                <VerticalStackLayout Spacing="10">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <Label
+                            Grid.Column="0"
+                            Text="Thiết bị (đồng bộ CMS)"
+                            FontAttributes="Bold"
+                            FontSize="18"
+                            TextColor="#0D47A1" />
+                        <Button
+                            Grid.Column="1"
+                            Text="Tải lại"
+                            Clicked="OnPresenceRefreshClicked"
+                            Padding="12,6"
+                            FontSize="13"
+                            CornerRadius="8"
+                            BackgroundColor="#43A047"
+                            TextColor="White" />
+                    </Grid>
+                    <Label
+                        x:Name="presenceSummaryLabel"
+                        FontSize="13"
+                        TextColor="#37474F"
+                        LineBreakMode="WordWrap" />
+                    <Label
+                        x:Name="presenceStatusLabel"
+                        FontSize="12"
+                        TextColor="#78909C"
+                        LineBreakMode="WordWrap" />
+                    <CollectionView
+                        x:Name="presenceCollection"
+                        MaximumHeightRequest="320">
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate x:DataType="x:String">
+                                <Label
+                                    Padding="0,4"
+                                    FontSize="12"
+                                    Text="{Binding}"
+                                    TextColor="#263238"
+                                    LineBreakMode="WordWrap" />
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
+                </VerticalStackLayout>
+            </Border>
+
+            <Border
+                BackgroundColor="White"
                 StrokeThickness="1"
                 Padding="15">
 

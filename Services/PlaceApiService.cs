@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Net;
 using System.Text.Json;
+using System.Threading;
 using TourGuideApp2.Models;
 
 namespace TourGuideApp2.Services;
@@ -531,6 +532,54 @@ public static class PlaceApiService
             PremiumPriceDemo = dto.PremiumPriceDemo,
             PremiumVietnameseAudioText = dto.PremiumVietnameseAudioText ?? string.Empty
         };
+    }
+
+    private static readonly HttpClient CmsPresenceHttp = CreatePresenceHttp();
+
+    private static HttpClient CreatePresenceHttp()
+    {
+        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
+        CmsTunnelHttp.ApplyTo(h);
+        return h;
+    }
+
+    /// <summary>Đồng bộ danh sách thiết bị với trang CMS «Thiết bị online» (cửa sổ ping ~2 phút, tab Bản đồ).</summary>
+    public static async Task<DevicePresenceResponse?> TryGetDevicePresenceAsync(CancellationToken cancellationToken = default)
+    {
+        foreach (var origin in GetCmsBaseUrlCandidatesForSync())
+        {
+            if (string.IsNullOrWhiteSpace(origin))
+                continue;
+            try
+            {
+                var url = $"{origin.TrimEnd('/')}/api/devices/presence";
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                CmsTunnelHttp.ApplyTo(req);
+                var mobileKey = GetMobileApiKeyForSync();
+                if (!string.IsNullOrWhiteSpace(mobileKey))
+                    req.Headers.TryAddWithoutValidation("X-Mobile-Key", mobileKey);
+
+                using var res = await CmsPresenceHttp.SendAsync(req, cancellationToken).ConfigureAwait(false);
+                if (!res.IsSuccessStatusCode)
+                    continue;
+
+                await using var stream = await res.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+                var payload = await JsonSerializer.DeserializeAsync<DevicePresenceResponse>(stream, JsonDefault, cancellationToken)
+                    .ConfigureAwait(false);
+                if (payload?.Devices is not null)
+                    return payload;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                // thử gốc CMS kế tiếp
+            }
+        }
+
+        return null;
     }
 
     private sealed class PoiApiItem

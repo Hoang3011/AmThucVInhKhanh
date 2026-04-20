@@ -15,6 +15,7 @@
 
 	<application
         android:allowBackup="true"
+        android:largeHeap="true"
         android:icon="@mipmap/appicon"
         android:roundIcon="@mipmap/appicon"
         android:supportsRtl="true"

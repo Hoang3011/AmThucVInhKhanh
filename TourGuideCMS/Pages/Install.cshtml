@@ -1,21 +1,24 @@
 @page "/Install"
 @model TourGuideCMS.Pages.InstallModel
 @{
+    Layout = "_LayoutPublic";
     ViewData["Title"] = "Tải app — AmThucVinhKhanh";
 }
 <div class="container py-4" style="max-width: 560px;">
     <h4 class="mb-3">Tải ứng dụng MAUI</h4>
-    <div class="alert alert-warning py-2 small mb-3">
-        <strong>APK mới sau mỗi lần sửa code:</strong> build Android rồi <strong>Upload APK</strong> ở dưới (hoặc copy vào <code>wwwroot/downloads/AmThucVinhKhanh.apk</code>).
-        Link tải có tham số <code>?v=…</code> đổi theo dung lượng + ngày file — tránh máy vẫn tải bản cũ. Trên điện thoại: gỡ app cũ hoặc tải lại nếu vẫn thấy màn hình đăng nhập.
-    </div>
-    <p class="small text-muted">
-        Quét mã QR trên trang chủ CMS hoặc bên dưới để mở đúng link (APK/ghi chú). Cùng LAN hoặc qua tunnel (ngrok / Cloudflare Tunnel): đặt <code>App:PublicBaseUrl</code> trong <code>appsettings.json</code> = URL https công khai (không slash cuối) để QR và link đúng khi không cùng WiFi.
+    <p class="small text-muted mb-2">
+        <strong>Quét QR</strong> (trang chủ CMS khi đã đăng nhập quản trị) — điện thoại sẽ <strong>bắt đầu tải APK</strong> (Release ~100–150MB, cùng file <code>wwwroot/downloads</code> như cắm USB). Nếu mở trong Zalo không tải: <strong>⋮</strong> → Mở bằng Chrome rồi quét lại.
     </p>
+    <details class="small text-muted mb-3">
+        <summary class="text-secondary" style="cursor:pointer;">Ghi chú cho quản trị (upload APK, tunnel, kiểm tra dung lượng)</summary>
+        <div class="mt-2 p-2 border rounded bg-light">
+            Đặt file <code>AmThucVinhKhanh.apk</code> trong <code>wwwroot/downloads/</code> hoặc upload form bên dưới. CMS không lấy APK nhỏ trong <code>bin</code>; ngưỡng <code>App:QrApkMinimumBytes</code> (mặc định 100MB). Kiểm tra: <code>/api/install/apk-info</code>. Ngoài LAN: <code>App:PublicBaseUrl</code> = URL https tunnel (không slash cuối).
+        </div>
+    </details>
     @if (Model.FromQr && !string.IsNullOrEmpty(Model.EffectiveDownloadUrl))
     {
         <div class="alert alert-info py-2 small">
-            Đang chuẩn bị tải app... Nếu chưa thấy hộp thoại cài đặt, bấm nút bên dưới hoặc mở bằng Chrome.
+            <strong>Đang mở cài đặt ứng dụng…</strong> Nếu không tự chuyển, dùng các nút bên dưới (hoặc mở <a href="/install/launch">/install/launch</a>).
         </div>
     }
 
@@ -38,7 +41,7 @@
     {
         <p>
             <a class="btn btn-primary" href="@Model.EffectiveDownloadUrl" rel="noopener">Tải / cài đặt app</a>
-            <a class="btn btn-outline-secondary ms-2" href="@Model.EffectiveDownloadUrl" target="_blank" rel="noopener">Mở bằng trình duyệt ngoài</a>
+            <a class="btn btn-outline-secondary ms-2" href="@Model.EffectiveDownloadUrl" target="_blank" rel="noopener">Mở bằng Chrome</a>
         </p>
         <p class="mt-2">
             <a class="btn btn-success" href="@Model.AppSetupDeepLink" rel="noopener">Mở app & tự cấu hình đồng bộ</a>
@@ -57,7 +60,7 @@
             <li>
                 <strong>Cách 1 (khuyên dùng trong LAN)</strong>: copy file APK vào
                 <code>TourGuideCMS/wwwroot/downloads/AmThucVinhKhanh.apk</code>.
-                Khi đó QR <code>/qr/app</code> sẽ trỏ thẳng tới file APK và điện thoại sẽ hỏi tải/cài.
+                Khi đó QR <code>/qr/app</code> mở <code>/install/launch</code> — bấm «Tải / cài đặt app» (cùng file ~130MB).
             </li>
             <li>
                 <strong>Cách 2</strong>: điền <code>App:AppDownloadUrl</code> trong <code>appsettings.json</code> bằng link APK public / link store.
@@ -82,26 +85,3 @@
     </div>
 </div>
 
-@if (Model.FromQr && !string.IsNullOrEmpty(Model.EffectiveDownloadUrl))
-{
-    <script>
-        // Webview (Zalo/Facebook/...) đôi khi không mở APK trực tiếp.
-        // Thử mở Chrome qua intent trước, rồi fallback về link APK thường.
-        var target = '@Model.EffectiveDownloadUrl';
-        var isAndroid = /Android/i.test(navigator.userAgent || '');
-        if (isAndroid && target.startsWith('http')) {
-            try {
-                var noScheme = target.replace(/^https?:\/\//i, '');
-                var scheme = target.startsWith('https:') ? 'https' : 'http';
-                var intentUrl = 'intent://' + noScheme + '#Intent;scheme=' + scheme + ';package=com.android.chrome;end';
-                window.location.href = intentUrl;
-            } catch (e) {
-                // ignore
-            }
-        }
-
-        setTimeout(function () {
-            window.location.href = target;
-        }, 500);
-    </script>
-}

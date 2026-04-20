@@ -97,7 +97,7 @@ public class PayModel : PageModel
         if (string.IsNullOrWhiteSpace(phone) || pwd.Length == 0)
         {
             ResultOk = false;
-            ResultMessage = "Vui lòng quét QR tải app và tạo tài khoản trước, sau đó đăng nhập tại đây để trả phí.";
+            ResultMessage = "Trên app: nghe thuyết minh và bản đồ không cần đăng nhập. Chỉ nhập số điện thoại và mật khẩu tại đây nếu bạn muốn thanh toán demo qua web (đã có tài khoản khách trên CMS).";
             return Page();
         }
 
@@ -105,7 +105,7 @@ public class PayModel : PageModel
         if (!ok || user is null)
         {
             ResultOk = false;
-            ResultMessage = "Không tìm thấy tài khoản hợp lệ. Vui lòng quét QR tải app, tạo tài khoản rồi đăng nhập lại để trả phí.";
+            ResultMessage = "Không tìm thấy tài khoản khớp. Nếu chỉ dùng app để tham quan thì không cần đăng nhập. Đăng nhập tại đây chỉ để ghi nhận thanh toán demo khi bạn đã có tài khoản trên hệ thống.";
             return Page();
         }
 

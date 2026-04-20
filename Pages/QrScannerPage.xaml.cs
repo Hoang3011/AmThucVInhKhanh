@@ -53,15 +53,31 @@ public partial class QrScannerPage : ContentPage
             _isHandled = true;
             cameraView.IsDetecting = false;
 
+            // Đóng modal trước rồi mới chạy callback — tránh Map/WebView + PopModal chồng nhau (Android hay văng app).
             MainThread.BeginInvokeOnMainThread(async () =>
             {
-                _onScanned.Invoke(code);
-                await Navigation.PopModalAsync();
+                try
+                {
+                    await Navigation.PopModalAsync();
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"QrScanner PopModal: {ex}");
+                }
+
+                try
+                {
+                    _onScanned?.Invoke(code);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"QrScanner OnScanned: {ex}");
+                }
             });
         }
         catch
         {
-            // Nuốt exception từ callback camera để tránh crash toàn app.
+            _isHandled = false;
         }
     }
 
@@ -81,8 +97,24 @@ public partial class QrScannerPage : ContentPage
             return;
         }
 
-        _onScanned.Invoke(manual.Trim());
-        await Navigation.PopModalAsync();
+        _isHandled = true;
+        try
+        {
+            await Navigation.PopModalAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"QrScanner manual PopModal: {ex}");
+        }
+
+        try
+        {
+            _onScanned?.Invoke(manual.Trim());
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"QrScanner manual OnScanned: {ex}");
+        }
     }
 
     protected override void OnDisappearing()

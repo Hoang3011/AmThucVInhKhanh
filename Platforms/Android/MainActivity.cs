@@ -2,6 +2,8 @@ using Android.App;
 using Android.Content;
 using Android.Content.PM;
 using Android.OS;
+using Microsoft.Maui.ApplicationModel;
+using Microsoft.Maui.Controls;
 using TourGuideApp2.Services;
 
 namespace TourGuideApp2
@@ -14,9 +16,12 @@ namespace TourGuideApp2
         DataHost = "setup")]
     public class MainActivity : MauiAppCompatActivity
     {
+        private DateTime _activityCreatedUtc;
+
         protected override void OnCreate(Bundle? savedInstanceState)
         {
             base.OnCreate(savedInstanceState);
+            _activityCreatedUtc = DateTime.UtcNow;
             TryApplySetupIntent(Intent);
         }
 
@@ -29,10 +34,11 @@ namespace TourGuideApp2
 
         protected override void OnStop()
         {
-            // Khi activity không còn hiển thị (về Home / vuốt tắt app). Bỏ qua xoay màn hình.
+            // Một số máy bắn OnStop sớm sau khi mở app — gọi heartbeat lúc đó dễ race với Shell/WebView và góp phần văng process.
             try
             {
-                if (!IsChangingConfigurations)
+                if (!IsChangingConfigurations
+                    && (DateTime.UtcNow - _activityCreatedUtc).TotalSeconds >= 2.0)
                     _ = DeviceHeartbeatService.NotifyMapTabLeftAsync();
             }
             catch
@@ -58,12 +64,37 @@ namespace TourGuideApp2
                     return;
 
                 var rawBase = data.GetQueryParameter("base");
-                if (!string.IsNullOrWhiteSpace(rawBase))
-                    PlaceApiService.TryApplyRemoteDemoBaseUrl(rawBase, out _);
+                if (string.IsNullOrWhiteSpace(rawBase))
+                    return;
+
+                if (!PlaceApiService.TryApplyRemoteDemoBaseUrl(rawBase, out _))
+                    return;
+
+                // Cold start sau cài APK / quét QR: Shell đôi khi chưa sẵn sau 1 lần delay — thử lại vài lần để tránh văng app.
+                MainThread.BeginInvokeOnMainThread(() => _ = NavigateSetupDeeplinkToExploreAsync());
             }
             catch
             {
                 // Không để deeplink setup làm văng app.
+            }
+        }
+
+        private static async Task NavigateSetupDeeplinkToExploreAsync()
+        {
+            for (var attempt = 0; attempt < 12; attempt++)
+            {
+                try
+                {
+                    await Task.Delay(attempt == 0 ? 850 : 380);
+                    if (Shell.Current is null)
+                        continue;
+                    await Shell.Current.GoToAsync("//explore", animate: false);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Setup deeplink → //explore attempt {attempt}: {ex.Message}");
+                }
             }
         }
     }

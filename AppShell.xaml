@@ -6,7 +6,7 @@
     xmlns:pages="clr-namespace:TourGuideApp2.Pages">
 
     <TabBar>
-
+        <!-- Khám phá đặt trước: mở app không tải WebView bản đồ ngay — giảm crash máy yếu; khớp màn «Dùng app trực tiếp». -->
         <ShellContent Title="Khám phá"
                       Route="explore"
                       ContentTemplate="{DataTemplate local:MainPage}" />

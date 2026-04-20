@@ -50,25 +50,33 @@ public static class PublicSiteUrls
     public static string ListenPayPayload(HttpContext ctx, IConfiguration config, int placeId)
         => $"{SiteRootForLinks(ctx, config)}/Listen/Pay?placeId={placeId}";
 
-    /// <summary>Chuỗi gắn trong PNG <c>/qr/app</c> — trùng với <see cref="AppDownloadQrContent"/> khi không dùng link trực tiếp.</summary>
+    /// <summary>Chỉ đường dẫn <c>/install/launch</c> (không tham số).</summary>
     public static string QrAppInstallLaunchUrl(HttpContext ctx, IConfiguration config)
         => $"{SiteRootForLinks(ctx, config)}/install/launch";
+
+    /// <summary>
+    /// Chuỗi trong PNG <c>/qr/app</c>: <c>/install/launch?v=…</c> khi có APK hợp lệ — quét QR mở trang «Đang mở cài đặt…» rồi bấm tải (cùng file ~130MB từ <see cref="ApkLocator"/>). Không APK: <c>/install/launch</c>.
+    /// </summary>
+    public static string QrAppInstallLaunchPayload(HttpContext ctx, IConfiguration config, IWebHostEnvironment env)
+    {
+        var site = SiteRootForLinks(ctx, config);
+        var apkPath = ApkLocator.FindPreferredApkPath(env, config);
+        if (!string.IsNullOrWhiteSpace(apkPath) && File.Exists(apkPath))
+        {
+            var v = ApkLocator.CacheBusterForPath(apkPath);
+            return $"{site}/install/launch?v={Uri.EscapeDataString(v)}";
+        }
+
+        return $"{site}/install/launch";
+    }
 
     /// <summary>URL ảnh QR (cache-bust) để trình duyệt không giữ PNG cũ.</summary>
     public static string QrAppImageSrc(HttpContext ctx, IConfiguration config)
         => $"{SiteRootForLinks(ctx, config)}/qr/app?cb={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
 
     /// <summary>
-    /// Nội dung mã QR "tải app": <c>App:AppDownloadUrl</c> nếu có; không thì <c>/install/launch</c> (cùng PNG <c>/qr/app</c>).
+    /// Chuỗi hiển thị / copy — trùng nội dung mã QR (PNG <c>/qr/app</c>).
     /// </summary>
-    public static string AppDownloadQrContent(HttpContext ctx, IConfiguration config)
-    {
-        var direct = (config["App:AppDownloadUrl"] ?? "").Trim();
-        if (!string.IsNullOrEmpty(direct)
-            && Uri.TryCreate(direct, UriKind.Absolute, out var u)
-            && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps))
-            return direct.Trim();
-
-        return QrAppInstallLaunchUrl(ctx, config);
-    }
+    public static string AppDownloadQrContent(HttpContext ctx, IConfiguration config, IWebHostEnvironment env)
+        => QrAppInstallLaunchPayload(ctx, config, env);
 }

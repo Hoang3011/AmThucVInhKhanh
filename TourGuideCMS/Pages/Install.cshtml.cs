@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using TourGuideCMS;
 using System.IO;
-using System.Linq;
 
 namespace TourGuideCMS.Pages;
 
@@ -31,7 +31,7 @@ public class InstallModel : PageModel
     /// <summary>URL ảnh QR đầy đủ + cache-bust (khớp host/port với máy đang mở CMS).</summary>
     public string QrAppImageSrc { get; private set; } = "";
 
-    public void OnGet()
+    public IActionResult OnGet()
     {
         FromQr = string.Equals(Request.Query["fromQr"], "1", StringComparison.Ordinal);
         Uploaded = string.Equals(Request.Query["uploaded"], "1", StringComparison.Ordinal);
@@ -40,49 +40,19 @@ public class InstallModel : PageModel
         AppDownloadDirectUrl = string.IsNullOrWhiteSpace(_config["App:AppDownloadUrl"])
             ? null
             : _config["App:AppDownloadUrl"]!.Trim();
-        LocalApkAvailable = FindAnyLocalApk(_env);
-        if (!string.IsNullOrWhiteSpace(AppDownloadDirectUrl))
-            EffectiveDownloadUrl = AppDownloadDirectUrl;
-        else if (LocalApkAvailable)
-        {
-            var apkPath = ApkLocator.FindPreferredApkPath(_env);
-            if (!string.IsNullOrWhiteSpace(apkPath) && System.IO.File.Exists(apkPath))
-            {
-                var site = PublicSiteUrls.SiteRootForLinks(HttpContext, _config);
-                var v = ApkLocator.CacheBusterForPath(apkPath);
-                EffectiveDownloadUrl = $"{site}/downloads/AmThucVinhKhanh.apk?v={v}";
-            }
-            else
-                EffectiveDownloadUrl = "/downloads/AmThucVinhKhanh.apk";
-        }
-        else
-            EffectiveDownloadUrl = null;
-        QrPayloadUrl = PublicSiteUrls.AppDownloadQrContent(HttpContext, _config);
+        LocalApkAvailable = !string.IsNullOrEmpty(ApkLocator.FindPreferredApkPath(_env, _config));
+        EffectiveDownloadUrl = InstallTargetUrlResolver.Resolve(HttpContext, _config, _env);
+
+        // ?fromQr=1: cùng trang tải tối giản như QR (không dừng ở /Install đầy chữ).
+        if (FromQr && !string.IsNullOrEmpty(EffectiveDownloadUrl))
+            return Redirect("/install/launch");
+
+        QrPayloadUrl = PublicSiteUrls.AppDownloadQrContent(HttpContext, _config, _env);
         var siteRoot = PublicSiteUrls.SiteRootForLinks(HttpContext, _config);
         ApiPlacesUrl = $"{siteRoot}/api/places";
         AppSetupDeepLink = $"amthucvinhkhanh://setup?base={Uri.EscapeDataString(siteRoot)}";
         QrAppImageSrc = PublicSiteUrls.QrAppImageSrc(HttpContext, _config);
+        return Page();
     }
 
-    private static bool FindAnyLocalApk(IWebHostEnvironment? env)
-    {
-        if (env is null) return false;
-
-        var webRoot = env.WebRootPath ?? string.Empty;
-        if (!string.IsNullOrWhiteSpace(webRoot))
-        {
-            var localDir = Path.Combine(webRoot, "downloads");
-            if (Directory.Exists(localDir) &&
-                Directory.GetFiles(localDir, "*.apk", SearchOption.TopDirectoryOnly).Length > 0)
-                return true;
-        }
-
-        var root = env.ContentRootPath ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(root))
-            return false;
-
-        var releaseDir = Path.GetFullPath(Path.Combine(root, "..", "bin", "Release", "net10.0-android"));
-        return Directory.Exists(releaseDir) &&
-               Directory.GetFiles(releaseDir, "*.apk", SearchOption.AllDirectories).Any();
-    }
 }

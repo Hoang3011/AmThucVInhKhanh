@@ -14,8 +14,27 @@ namespace TourGuideApp2
 
         public override void OnCreate()
         {
-            // Bắt buộc với Microsoft.Data.Sqlite + bundle_green trên nhiều máy — thiếu hay crash native khi mở DB.
-            SQLitePCL.Batteries_V2.Init();
+            AndroidEnvironment.UnhandledExceptionRaiser += (_, args) =>
+            {
+                try
+                {
+                    Log.Error("AmThucVinhKhanh", "Unhandled: " + args.Exception);
+                }
+                catch
+                {
+                    // bỏ qua
+                }
+            };
+
+            try
+            {
+                // Bắt buộc với Microsoft.Data.Sqlite + bundle_green trên nhiều máy — thiếu hay crash native khi mở DB.
+                SQLitePCL.Batteries_V2.Init();
+            }
+            catch (Exception ex)
+            {
+                Log.Error("AmThucVinhKhanh", "SQLitePCL.Init: " + ex);
+            }
 
             TaskScheduler.UnobservedTaskException += (_, args) =>
             {
