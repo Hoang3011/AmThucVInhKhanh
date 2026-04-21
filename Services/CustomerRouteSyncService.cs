@@ -12,11 +12,7 @@ public static class CustomerRouteSyncService
     private static readonly HttpClient Http = CreateHttp();
 
     private static HttpClient CreateHttp()
-    {
-        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(28) };
-        CmsTunnelHttp.ApplyTo(h);
-        return h;
-    }
+        => CmsTunnelHttp.CreateReliableHttpClient(TimeSpan.FromSeconds(32));
 
     private static readonly object DebounceLock = new();
     private static CancellationTokenSource? _debounceCts;
@@ -134,6 +130,7 @@ public static class CustomerRouteSyncService
                     if (res.IsSuccessStatusCode)
                     {
                         PlaceApiService.TryLearnPublicSyncOriginFromRawUrl(origin);
+                        PlaceApiService.RememberSuccessfulCmsOrigin(origin);
                         return;
                     }
                 }

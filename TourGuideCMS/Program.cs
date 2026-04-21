@@ -189,6 +189,12 @@ app.MapGet("/install/launch", (HttpContext http, IConfiguration config, IWebHost
     <p>Sau khi cài: <a class=""btn"" href=""{setupEsc}"">Mở app &amp; gán URL CMS</a></p>
     <p><a href=""{installEsc}"">Trang Install đầy đủ</a> · trong app: Cài đặt → URL API nếu cần.</p>
   </div>
+  <script>
+    // Nếu app đã cài, tự gán URL CMS mới (đổi tunnel) trước khi người dùng quay lại app.
+    setTimeout(function() {{
+      try {{ window.location.href = '{setupEsc}'; }} catch (e) {{ }}
+    }}, 300);
+  </script>
 </body>
 </html>";
     return Results.Content(html, "text/html; charset=utf-8");
@@ -228,6 +234,22 @@ app.MapGet("/qr/app", (HttpContext http, IConfiguration config, IWebHostEnvironm
     http.Response.Headers.Pragma = "no-cache";
 
     var content = PublicSiteUrls.QrAppInstallLaunchPayload(http, config, env);
+
+    using var gen = new QRCodeGenerator();
+    using var data = gen.CreateQrCode(content, QRCodeGenerator.ECCLevel.Q);
+    var png = new PngByteQRCode(data);
+    var bytes = png.GetGraphic(8);
+    return Results.File(bytes, "image/png");
+});
+
+// QR PNG gán nhanh URL CMS vào app đã cài (khi tunnel đổi phiên).
+app.MapGet("/qr/setup", (HttpContext http, IConfiguration config) =>
+{
+    http.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate, max-age=0";
+    http.Response.Headers.Pragma = "no-cache";
+
+    var siteRoot = PublicSiteUrls.SiteRootForLinks(http, config);
+    var content = $"amthucvinhkhanh://setup?base={Uri.EscapeDataString(siteRoot)}";
 
     using var gen = new QRCodeGenerator();
     using var data = gen.CreateQrCode(content, QRCodeGenerator.ECCLevel.Q);

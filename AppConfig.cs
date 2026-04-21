@@ -6,15 +6,15 @@ namespace TourGuideApp2;
 /// </summary>
 public static class AppConfig
 {
-    /// <summary>Mặc định khi người dùng chưa nhập URL trong Cài đặt — nhiều thiết bị nên dùng chung URL máy chạy CMS (LAN).</summary>
-    public const string DefaultPoiApiUrl = "http://192.168.1.101:5095/api/places";
+    /// <summary>Mặc định khi người dùng chưa nhập URL trong Cài đặt — ưu tiên tunnel/public để khác mạng vẫn đồng bộ.</summary>
+    public const string DefaultPoiApiUrl = "https://b544wx2q-5095.asse.devtunnels.ms/api/places";
     public const string DefaultPoiApiKey = "";
 
     /// <summary>
     /// Gốc CMS mà **4G** gọi được (ngrok, Cloudflare Tunnel, domain public…). Để trống = app chỉ đồng bộ lượt phát/entitlement qua LAN như <see cref="DefaultPoiApiUrl"/>.
     /// Ví dụ sau khi chạy tunnel trỏ vào cổng CMS: <c>https://abc123.ngrok-free.app</c> (không có slash cuối).
     /// </summary>
-    public const string DefaultPublicCmsBaseUrl = "";
+    public const string DefaultPublicCmsBaseUrl = "https://b544wx2q-5095.asse.devtunnels.ms";
 
     /// <summary>Khóa trùng <c>App:MobileApiKey</c> trên CMS (để trống = không kiểm tra).</summary>
     public const string MobileApiKey = "";

@@ -12,11 +12,7 @@ public static class PlaySyncService
     private static readonly HttpClient Http = CreateHttp();
 
     private static HttpClient CreateHttp()
-    {
-        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(28) };
-        CmsTunnelHttp.ApplyTo(h);
-        return h;
-    }
+        => CmsTunnelHttp.CreateReliableHttpClient(TimeSpan.FromSeconds(32));
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static string? _pendingFilePath;
 
@@ -144,6 +140,7 @@ public static class PlaySyncService
             if (res.IsSuccessStatusCode)
             {
                 PlaceApiService.TryLearnPublicSyncOriginFromRawUrl(origin);
+                PlaceApiService.RememberSuccessfulCmsOrigin(origin);
                 return true;
             }
 

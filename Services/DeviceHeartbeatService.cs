@@ -14,11 +14,7 @@ public static class DeviceHeartbeatService
     private static CancellationTokenSource? _mapLoopCts;
 
     private static HttpClient CreateHttp()
-    {
-        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(22) };
-        CmsTunnelHttp.ApplyTo(h);
-        return h;
-    }
+        => CmsTunnelHttp.CreateReliableHttpClient(TimeSpan.FromSeconds(28));
 
     /// <summary>Bắt đầu ping định kỳ — gọi từ MapPage.OnAppearing.</summary>
     public static void StartMapTabSession()
@@ -112,7 +108,10 @@ public static class DeviceHeartbeatService
         {
             ct.ThrowIfCancellationRequested();
             if (await TryPostAsync(origin, body, ct).ConfigureAwait(false))
+            {
+                PlaceApiService.RememberSuccessfulCmsOrigin(origin);
                 return;
+            }
         }
     }
 

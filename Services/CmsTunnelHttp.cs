@@ -1,4 +1,6 @@
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Net.Http.Headers;
 
 namespace TourGuideApp2.Services;
@@ -13,6 +15,28 @@ public static class CmsTunnelHttp
     /// <summary>Microsoft Learn — bỏ trang anti-phishing cho client không phải trình duyệt (GET /api/places, …).</summary>
     private const string DevTunnelSkipAntiPhishing = "X-Tunnel-Skip-AntiPhishing-Page";
 
+    /// <summary>User-Agent giống Chrome — một số tunnel/WAF/4G (vd. Samsung A125) chặn UA mặc định của HttpClient.</summary>
+    private const string BrowserLikeUserAgent =
+        "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 AmThucVinhKhanh/1";
+
+    /// <summary>Connect dài + pool ngắn — tránh treo DNS/TLS trên 4G máy yếu.</summary>
+    public static HttpClient CreateReliableHttpClient(TimeSpan requestTimeout)
+    {
+        var handler = new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+            ConnectTimeout = TimeSpan.FromSeconds(40),
+            AutomaticDecompression = DecompressionMethods.All
+        };
+
+        var client = new HttpClient(handler, disposeHandler: true)
+        {
+            Timeout = requestTimeout
+        };
+        ApplyTo(client);
+        return client;
+    }
+
     public static void ApplyTo(HttpClient client)
     {
         try
@@ -23,6 +47,8 @@ public static class CmsTunnelHttp
                 client.DefaultRequestHeaders.TryAddWithoutValidation(DevTunnelSkipAntiPhishing, "true");
             if (client.DefaultRequestHeaders.Accept.Count == 0)
                 client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            if (!client.DefaultRequestHeaders.UserAgent.Any())
+                client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", BrowserLikeUserAgent);
         }
         catch
         {
@@ -38,19 +64,9 @@ public static class CmsTunnelHttp
             request.Headers.TryAddWithoutValidation(DevTunnelSkipAntiPhishing, "true");
             if (!request.Headers.Accept.Any())
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            // Một số nhà mạng/WAF chặn client không có User-Agent (4G hay lỗi hơn Wi‑Fi/USB debug).
+            // Tunnel / WAF / 4G (Samsung): UA mặc định hoặc quá “lạ” dễ bị chặn — dùng UA giống Chrome.
             if (!request.Headers.UserAgent.Any())
-            {
-                try
-                {
-                    var v = Microsoft.Maui.ApplicationModel.AppInfo.Current.VersionString;
-                    request.Headers.TryAddWithoutValidation("User-Agent", $"AmThucVinhKhanh/{v} (MAUI)");
-                }
-                catch
-                {
-                    request.Headers.TryAddWithoutValidation("User-Agent", "AmThucVinhKhanh (MAUI)");
-                }
-            }
+                request.Headers.TryAddWithoutValidation("User-Agent", BrowserLikeUserAgent);
         }
         catch
         {

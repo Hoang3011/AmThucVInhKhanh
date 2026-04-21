@@ -3,6 +3,7 @@ using System.Net;
 using System.Text.Json;
 using System.Threading;
 using System.Linq;
+using Microsoft.Maui.Networking;
 using TourGuideApp2.Models;
 
 namespace TourGuideApp2.Services;
@@ -15,6 +16,9 @@ public static class PlaceApiService
     public const string CmsListenPayPublicBaseUrlKey = "CmsListenPayPublicBaseUrl";
     /// <summary>Trùng <c>App:MobileApiKey</c> trên CMS — cần khi CMS bật khóa (lượt phát, tuyến, lịch sử).</summary>
     public const string CmsMobileApiKeyPreferenceKey = "CmsMobileApiKey";
+
+    /// <summary>Gốc tunnel/public vừa gọi API thành công — ưu tiên đầu danh sách lần sau (đa thiết bị / 4G).</summary>
+    private const string CmsLastSuccessfulNonLanOriginKey = "CmsLastSuccessfulNonLanOrigin";
 
     /// <summary>Ưu tiên khóa đã lưu trong Cài đặt, sau đó <see cref="AppConfig.MobileApiKey"/>.</summary>
     public static string GetMobileApiKeyForSync()
@@ -35,10 +39,8 @@ public static class PlaceApiService
 
     private static HttpClient CreatePlacesFetchHttp()
     {
-        // Một số máy 4G chậm / tunnel lạnh — 4s hay fail hết dải URL rồi không học được gốc public.
-        var c = new HttpClient { Timeout = TimeSpan.FromSeconds(14) };
-        CmsTunnelHttp.ApplyTo(c);
-        return c;
+        // Tunnel + 4G máy yếu (A125…): timeout ngắn hay fail; ConnectTimeout dài xử lý trong SocketsHttpHandler.
+        return CmsTunnelHttp.CreateReliableHttpClient(TimeSpan.FromSeconds(34));
     }
 
     private static readonly JsonSerializerOptions JsonDefault = new()
@@ -133,6 +135,104 @@ public static class PlaceApiService
         return false;
     }
 
+    /// <summary>4G / Bluetooth: không tin URL LAN — tránh treo hàng chục giây trên từng request (vd. Samsung A125).</summary>
+    private static bool PreferReachablePublicCmsEndpointsOnly()
+    {
+        try
+        {
+            var access = Connectivity.Current.NetworkAccess;
+            if (access is not NetworkAccess.Internet and not NetworkAccess.ConstrainedInternet)
+                return false;
+
+            foreach (var p in Connectivity.Current.ConnectionProfiles)
+            {
+                if (p == ConnectionProfile.WiFi || p == ConnectionProfile.Ethernet)
+                    return false;
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Chỉ khi **không** có Wi‑Fi/Ethernet (4G thuần / Bluetooth…) — tránh bỏ LAN khi nhà vẫn Wi‑Fi + SIM bật (CMS chỉ LAN).</summary>
+    private static bool TreatAsOffHomeLanForCms()
+        => PreferReachablePublicCmsEndpointsOnly();
+
+    /// <summary>Ghi nhớ gốc tunnel/public sau bất kỳ API CMS thành công — dùng sắp xếp ưu tiên lần sau.</summary>
+    public static void RememberSuccessfulCmsOrigin(string? rawUrlOrOrigin)
+    {
+        try
+        {
+            var raw = (rawUrlOrOrigin ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(raw) || !Uri.TryCreate(raw, UriKind.Absolute, out var u))
+                return;
+            if (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps)
+                return;
+            if (IsHostUnusableForPhoneQr(u.Host) || IsLikelyLocalOnlyHost(u.Host))
+                return;
+
+            var origin = $"{u.Scheme}://{u.Authority}".TrimEnd('/');
+            Preferences.Default.Set(CmsLastSuccessfulNonLanOriginKey, origin);
+        }
+        catch
+        {
+            // bỏ qua
+        }
+    }
+
+    private static string? GetLastSuccessfulNonLanOrigin()
+    {
+        var s = (Preferences.Default.Get(CmsLastSuccessfulNonLanOriginKey, string.Empty) ?? string.Empty).Trim().TrimEnd('/');
+        if (string.IsNullOrEmpty(s) || !Uri.TryCreate(s, UriKind.Absolute, out var u))
+            return null;
+        if (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps)
+            return null;
+        if (IsHostUnusableForPhoneQr(u.Host) || IsLikelyLocalOnlyHost(u.Host))
+            return null;
+        return $"{u.Scheme}://{u.Authority}".TrimEnd('/');
+    }
+
+    private static void PrependLastSuccessfulNonLanOrigin(List<string> list)
+    {
+        var last = GetLastSuccessfulNonLanOrigin();
+        if (string.IsNullOrEmpty(last))
+            return;
+
+        for (var i = list.Count - 1; i >= 0; i--)
+        {
+            if (string.Equals(list[i], last, StringComparison.OrdinalIgnoreCase))
+                list.RemoveAt(i);
+        }
+
+        list.Insert(0, last);
+    }
+
+    /// <summary>Bỏ host LAN khỏi danh sách khi đang cellular và vẫn còn ít nhất một host public — tránh fail multi-device.</summary>
+    private static void ApplyCrossNetworkOriginPolicy(List<string> list)
+    {
+        if (list.Count == 0 || !TreatAsOffHomeLanForCms())
+            return;
+
+        static bool IsNonLocal(string o) =>
+            Uri.TryCreate(o, UriKind.Absolute, out var u) && !IsLikelyLocalOnlyHost(u.Host);
+
+        if (!list.Any(IsNonLocal))
+            return;
+
+        list.RemoveAll(o => Uri.TryCreate(o, UriKind.Absolute, out var u) && IsLikelyLocalOnlyHost(u.Host));
+    }
+
+    private static bool HasAnyUsablePublicCmsEndpointHint()
+    {
+        if (!string.IsNullOrEmpty(GetConfiguredPublicCmsOrigin()))
+            return true;
+        return GetLastSuccessfulNonLanOrigin() is not null;
+    }
+
     private static string GetConfiguredPublicCmsOrigin()
     {
         var explicitBase = (Preferences.Default.Get(CmsListenPayPublicBaseUrlKey, "") ?? "").Trim().TrimEnd('/');
@@ -182,6 +282,10 @@ public static class PlaceApiService
     /// Danh sách gốc CMS để đồng bộ (ưu tiên public/tunnel, rồi LAN). App sẽ thử tuần tự đến khi thành công.
     /// </summary>
     public static IReadOnlyList<string> GetCmsBaseUrlCandidatesForSync()
+        => GetCmsBaseUrlCandidatesForSync(applyCrossNetworkOriginPolicy: true);
+
+    /// <param name="applyCrossNetworkOriginPolicy">false = vẫn sort public trước nhưng không loại LAN (fallback sau khi presence thất bại trên 4G).</param>
+    public static IReadOnlyList<string> GetCmsBaseUrlCandidatesForSync(bool applyCrossNetworkOriginPolicy)
     {
         var list = new List<string>();
         AddOriginCandidate(list, GetConfiguredPublicCmsOrigin());
@@ -199,21 +303,29 @@ public static class PlaceApiService
             var cmp = LocalRank(a).CompareTo(LocalRank(b));
             return cmp != 0 ? cmp : string.CompareOrdinal(a, b);
         });
+
+        if (applyCrossNetworkOriginPolicy)
+            ApplyCrossNetworkOriginPolicy(list);
+        PrependLastSuccessfulNonLanOrigin(list);
         return list;
     }
 
     /// <summary>Gộp mọi gốc có thể gọi <c>/api/devices/presence</c>: sync + authority từ từng URL <c>/api/places</c> (một số máy chỉ cấu hình places, chưa có prefs public).</summary>
     public static IReadOnlyList<string> GetMergedCmsOriginCandidatesForPresence()
+        => GetMergedCmsOriginCandidatesForPresence(applyCrossNetworkOriginPolicy: true);
+
+    /// <summary>Giống overload không tham số; <paramref name="applyCrossNetworkOriginPolicy"/> = false thì vẫn giữ URL LAN trong danh sách.</summary>
+    public static IReadOnlyList<string> GetMergedCmsOriginCandidatesForPresence(bool applyCrossNetworkOriginPolicy)
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var o in GetCmsBaseUrlCandidatesForSync())
+        foreach (var o in GetCmsBaseUrlCandidatesForSync(applyCrossNetworkOriginPolicy))
         {
             var t = (o ?? string.Empty).Trim().TrimEnd('/');
             if (!string.IsNullOrEmpty(t))
                 set.Add(t);
         }
 
-        foreach (var api in GetApiUrlCandidatesForPlaces())
+        foreach (var api in GetApiUrlCandidatesForPlaces(applyCrossNetworkOriginPolicy))
         {
             var origin = ParseOriginFromApiUrl(api);
             var t = (origin ?? string.Empty).Trim().TrimEnd('/');
@@ -229,10 +341,18 @@ public static class PlaceApiService
             var cmp = LocalRank(a).CompareTo(LocalRank(b));
             return cmp != 0 ? cmp : string.CompareOrdinal(a, b);
         });
+
+        if (applyCrossNetworkOriginPolicy)
+            ApplyCrossNetworkOriginPolicy(list);
+        PrependLastSuccessfulNonLanOrigin(list);
         return list;
     }
 
     public static IReadOnlyList<string> GetApiUrlCandidatesForPlaces()
+        => GetApiUrlCandidatesForPlaces(applyCrossNetworkOriginPolicy: true);
+
+    /// <param name="applyCrossNetworkOriginPolicy">false = không gỡ URL LAN (dùng sau khi đã thử bản lọc 4G).</param>
+    public static IReadOnlyList<string> GetApiUrlCandidatesForPlaces(bool applyCrossNetworkOriginPolicy)
     {
         var list = new List<string>();
 
@@ -258,6 +378,29 @@ public static class PlaceApiService
             var cmp = LocalRank(a).CompareTo(LocalRank(b));
             return cmp != 0 ? cmp : string.CompareOrdinal(a, b);
         });
+
+        if (applyCrossNetworkOriginPolicy && TreatAsOffHomeLanForCms())
+        {
+            static bool ApiIsNonLocal(string url) =>
+                Uri.TryCreate(url, UriKind.Absolute, out var u) && !IsLikelyLocalOnlyHost(u.Host);
+
+            if (list.Any(ApiIsNonLocal))
+                list.RemoveAll(url => Uri.TryCreate(url, UriKind.Absolute, out var u) && IsLikelyLocalOnlyHost(u.Host));
+        }
+
+        var last = GetLastSuccessfulNonLanOrigin();
+        if (!string.IsNullOrEmpty(last))
+        {
+            var apiFirst = $"{last}/api/places";
+            for (var i = list.Count - 1; i >= 0; i--)
+            {
+                if (string.Equals(list[i], apiFirst, StringComparison.OrdinalIgnoreCase))
+                    list.RemoveAt(i);
+            }
+
+            list.Insert(0, apiFirst);
+        }
+
         return list;
     }
 
@@ -407,15 +550,24 @@ public static class PlaceApiService
                     request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {apiKey}");
                 }
 
-                using var response = await PlacesFetchHttp.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                using var perUrlCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var isLanHost = Uri.TryCreate(apiUrl, UriKind.Absolute, out var hostUri) && IsLikelyLocalOnlyHost(hostUri.Host);
+                perUrlCts.CancelAfter(isLanHost ? TimeSpan.FromSeconds(4) : TimeSpan.FromSeconds(32));
+
+                using var response = await PlacesFetchHttp.SendAsync(request, perUrlCts.Token).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                     continue;
 
-                // Luôn học gốc public từ chính URL vừa gọi được (không phụ thuộc qrPayload từng POI — nhiều máy chỉ có tunnel sau bước này).
-                TryLearnPublicSyncOriginFromRawUrl(apiUrl);
+                var media = response.Content.Headers.ContentType?.MediaType;
+                if (!string.IsNullOrEmpty(media) && media.Contains("text/html", StringComparison.OrdinalIgnoreCase))
+                    continue;
 
-                var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-                var apiItems = ParseApiItems(json);
+                var json = await response.Content.ReadAsStringAsync(perUrlCts.Token).ConfigureAwait(false);
+                var trimmedJson = (json ?? string.Empty).TrimStart();
+                if (trimmedJson.Length == 0 || trimmedJson[0] == '<')
+                    continue;
+
+                var apiItems = ParseApiItems(json ?? string.Empty);
                 if (apiItems.Count == 0)
                     continue;
                 TryLearnPublicSyncOriginFromApiItems(apiItems);
@@ -427,7 +579,12 @@ public static class PlaceApiService
                     .ToList();
 
                 if (mapped.Count > 0)
+                {
+                    // Chỉ học prefs sau khi chắc chắn JSON hợp lệ — tránh 200 HTML (ngrok/WAF) ghi đè tunnel.
+                    TryLearnPublicSyncOriginFromRawUrl(apiUrl);
+                    RememberSuccessfulCmsOrigin(apiUrl);
                     return mapped;
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -540,6 +697,7 @@ public static class PlaceApiService
 
         var origin = $"{u.Scheme}://{u.Authority}";
         Preferences.Default.Set(CmsListenPayPublicBaseUrlKey, origin);
+        RememberSuccessfulCmsOrigin(rawUrl);
 
         var savedPoiApi = (Preferences.Default.Get(PoiApiUrlPreferenceKey, string.Empty) ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(savedPoiApi)
@@ -634,34 +792,72 @@ public static class PlaceApiService
     private static readonly HttpClient CmsPresenceHttp = CreatePresenceHttp();
 
     private static HttpClient CreatePresenceHttp()
+        => CmsTunnelHttp.CreateReliableHttpClient(TimeSpan.FromSeconds(36));
+
+    private static async Task<DevicePresenceResponse?> TryGetDevicePresenceOnOriginsAsync(
+        IReadOnlyList<string> origins,
+        CancellationToken cancellationToken)
     {
-        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(28) };
-        CmsTunnelHttp.ApplyTo(h);
-        return h;
+        foreach (var origin in origins)
+        {
+            if (string.IsNullOrWhiteSpace(origin))
+                continue;
+            try
+            {
+                var url = $"{origin.TrimEnd('/')}/api/devices/presence";
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                CmsTunnelHttp.ApplyTo(req);
+                var mobileKey = GetMobileApiKeyForSync();
+                if (!string.IsNullOrWhiteSpace(mobileKey))
+                    req.Headers.TryAddWithoutValidation("X-Mobile-Key", mobileKey);
+
+                using var perUrlCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var isLanOrigin = Uri.TryCreate(origin, UriKind.Absolute, out var ou) && IsLikelyLocalOnlyHost(ou.Host);
+                perUrlCts.CancelAfter(isLanOrigin ? TimeSpan.FromSeconds(5) : TimeSpan.FromSeconds(34));
+
+                using var res = await CmsPresenceHttp.SendAsync(req, perUrlCts.Token).ConfigureAwait(false);
+                if (!res.IsSuccessStatusCode)
+                    continue;
+
+                var presenceMedia = res.Content.Headers.ContentType?.MediaType;
+                if (!string.IsNullOrEmpty(presenceMedia) && presenceMedia.Contains("text/html", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var body = await res.Content.ReadAsStringAsync(perUrlCts.Token).ConfigureAwait(false);
+                var trimmed = (body ?? string.Empty).TrimStart();
+                if (trimmed.Length == 0 || trimmed.StartsWith('<') || trimmed.StartsWith("<!"))
+                    continue;
+
+                var payload = JsonSerializer.Deserialize<DevicePresenceResponse>(body ?? string.Empty, JsonDefault);
+                if (payload is null)
+                    continue;
+                payload.Devices ??= [];
+                RememberSuccessfulCmsOrigin(origin);
+                return payload;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                // Timeout / hủy nội bộ — origin kế.
+            }
+            catch
+            {
+                // thử gốc CMS kế tiếp
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Đồng bộ danh sách thiết bị với trang CMS «Thiết bị online» (cửa sổ ping ~2 phút, tab Bản đồ).</summary>
     public static async Task<DevicePresenceResponse?> TryGetDevicePresenceAsync(CancellationToken cancellationToken = default)
     {
-        for (var round = 0; round < 2; round++)
+        // Chỉ prime places khi chưa có tunnel/public trong prefs — tránh gấp đôi thời gian mỗi lần mở tab Bản đồ.
+        if (!HasAnyUsablePublicCmsEndpointHint())
         {
-            if (round > 0)
-            {
-                try
-                {
-                    await Task.Delay(500, cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch
-                {
-                    return null;
-                }
-            }
-
-            // Prime: GET /api/places không cần X-Mobile-Key — học tunnel/public.
             try
             {
                 _ = await TryGetRemotePlacesAsync(cancellationToken).ConfigureAwait(false);
@@ -674,48 +870,20 @@ public static class PlaceApiService
             {
                 // Vẫn thử presence.
             }
+        }
 
-            foreach (var origin in GetMergedCmsOriginCandidatesForPresence())
-            {
-                if (string.IsNullOrWhiteSpace(origin))
-                    continue;
-                try
-                {
-                    var url = $"{origin.TrimEnd('/')}/api/devices/presence";
-                    using var req = new HttpRequestMessage(HttpMethod.Get, url);
-                    CmsTunnelHttp.ApplyTo(req);
-                    var mobileKey = GetMobileApiKeyForSync();
-                    if (!string.IsNullOrWhiteSpace(mobileKey))
-                        req.Headers.TryAddWithoutValidation("X-Mobile-Key", mobileKey);
+        var primary = await TryGetDevicePresenceOnOriginsAsync(
+            GetMergedCmsOriginCandidatesForPresence(applyCrossNetworkOriginPolicy: true),
+            cancellationToken).ConfigureAwait(false);
+        if (primary is not null)
+            return primary;
 
-                    using var res = await CmsPresenceHttp.SendAsync(req, cancellationToken).ConfigureAwait(false);
-                    if (!res.IsSuccessStatusCode)
-                        continue;
-
-                    var body = await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-                    var trimmed = (body ?? string.Empty).TrimStart();
-                    if (trimmed.Length == 0 || trimmed.StartsWith('<') || trimmed.StartsWith("<!"))
-                        continue;
-
-                    var payload = JsonSerializer.Deserialize<DevicePresenceResponse>(body!, JsonDefault);
-                    if (payload is null)
-                        continue;
-                    payload.Devices ??= [];
-                    return payload;
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (OperationCanceledException)
-                {
-                    // Timeout / hủy nội bộ — origin kế.
-                }
-                catch
-                {
-                    // thử gốc CMS kế tiếp
-                }
-            }
+        // 4G đã bỏ LAN mà tunnel vẫn lỗi: thử lại cả LAN (một số máy tunnel Dev/ngrok chập chờn).
+        if (TreatAsOffHomeLanForCms())
+        {
+            return await TryGetDevicePresenceOnOriginsAsync(
+                GetMergedCmsOriginCandidatesForPresence(applyCrossNetworkOriginPolicy: false),
+                cancellationToken).ConfigureAwait(false);
         }
 
         return null;

@@ -175,8 +175,8 @@ public sealed class CustomerAccountRepository
             VALUES (@d, @t, @p, @v, @m)
             ON CONFLICT(DeviceInstallId) DO UPDATE SET
                 LastSeenUtc = excluded.LastSeenUtc,
-                Platform = excluded.Platform,
-                AppVersion = excluded.AppVersion,
+                Platform = COALESCE(excluded.Platform, AppDeviceHeartbeat.Platform),
+                AppVersion = COALESCE(excluded.AppVersion, AppDeviceHeartbeat.AppVersion),
                 IsOnMap = excluded.IsOnMap;
             """;
         cmd.Parameters.AddWithValue("@d", id);
@@ -676,20 +676,29 @@ public sealed class CustomerAccountRepository
 
         var list = new List<CustomerDeviceRow>();
         await using var cmd = connection.CreateCommand();
+        // Gộp nhiều snapshot cùng tên thiết bị (cài lại app → deviceInstallId mới) — giữ bản hoạt động gần nhất.
         cmd.CommandText = """
-            SELECT d.DeviceInstallId,
-                   COALESCE(NULLIF(trim(d.DeviceName), ''), NULLIF(trim(h.Platform), ''), 'Thiết bị') AS DeviceName,
-                   d.CustomerUserId,
-                   u.FullName,
-                   u.PhoneOrEmail,
-                   d.UpdatedAtUtc,
-                   h.LastSeenUtc,
-                   h.Platform,
-                   h.AppVersion
-            FROM DeviceRouteSnapshot d
-            LEFT JOIN CustomerUser u ON u.Id = d.CustomerUserId
-            LEFT JOIN AppDeviceHeartbeat h ON h.DeviceInstallId = d.DeviceInstallId
-            ORDER BY datetime(COALESCE(h.LastSeenUtc, d.UpdatedAtUtc)) DESC
+            SELECT DeviceInstallId, DeviceName, CustomerUserId, FullName, PhoneOrEmail, UpdatedAtUtc, LastSeenUtc, Platform, AppVersion
+            FROM (
+                SELECT d.DeviceInstallId,
+                       COALESCE(NULLIF(trim(d.DeviceName), ''), NULLIF(trim(h.Platform), ''), 'Thiết bị') AS DeviceName,
+                       d.CustomerUserId,
+                       u.FullName,
+                       u.PhoneOrEmail,
+                       d.UpdatedAtUtc,
+                       h.LastSeenUtc,
+                       h.Platform,
+                       h.AppVersion,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY lower(trim(COALESCE(NULLIF(d.DeviceName, ''), d.DeviceInstallId)))
+                           ORDER BY datetime(COALESCE(h.LastSeenUtc, d.UpdatedAtUtc)) DESC
+                       ) AS rn
+                FROM DeviceRouteSnapshot d
+                LEFT JOIN CustomerUser u ON u.Id = d.CustomerUserId
+                LEFT JOIN AppDeviceHeartbeat h ON h.DeviceInstallId = d.DeviceInstallId
+            ) x
+            WHERE x.rn = 1
+            ORDER BY datetime(COALESCE(x.LastSeenUtc, x.UpdatedAtUtc)) DESC
             """;
         await using var r = await cmd.ExecuteReaderAsync();
         while (await r.ReadAsync())

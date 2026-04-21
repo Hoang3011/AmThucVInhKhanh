@@ -15,11 +15,7 @@ public static class PremiumPaymentService
     private static readonly HttpClient EntitlementHttp = CreateHttp(12);
 
     private static HttpClient CreateHttp(int timeoutSeconds)
-    {
-        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(timeoutSeconds) };
-        CmsTunnelHttp.ApplyTo(h);
-        return h;
-    }
+        => CmsTunnelHttp.CreateReliableHttpClient(TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds, 12, 40)));
 
     private static readonly object EntitlementTrueCacheLock = new();
     private static readonly Dictionary<string, DateTime> EntitlementTrueUntilUtc = new();
@@ -167,6 +163,7 @@ public static class PremiumPaymentService
                 using var res = await EntitlementHttp.SendAsync(req, cancellationToken).ConfigureAwait(false);
                 if (!res.IsSuccessStatusCode)
                     continue;
+                PlaceApiService.RememberSuccessfulCmsOrigin(origin);
                 await using var stream = await res.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
                 using var doc = await JsonDocument.ParseAsync(stream, default, cancellationToken).ConfigureAwait(false);
                 var unlocked = doc.RootElement.TryGetProperty("unlocked", out var u) &&
@@ -284,7 +281,10 @@ public static class PremiumPaymentService
                 }
 
                 if (res.IsSuccessStatusCode || already)
+                {
+                    PlaceApiService.RememberSuccessfulCmsOrigin(origin);
                     return (ok || already, msg, already);
+                }
 
                 lastError = msg;
             }

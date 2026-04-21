@@ -25,11 +25,7 @@ public static class RemotePlayHistoryService
     private static readonly HttpClient Http = CreateHttp();
 
     private static HttpClient CreateHttp()
-    {
-        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(28) };
-        CmsTunnelHttp.ApplyTo(h);
-        return h;
-    }
+        => CmsTunnelHttp.CreateReliableHttpClient(TimeSpan.FromSeconds(32));
 
     public static Task<RemoteHistoryFetchResult> FetchForCurrentCustomerAsync()
         => FetchForCurrentCustomerAsync(CancellationToken.None);
@@ -90,6 +86,7 @@ public static class RemotePlayHistoryService
 
                 var items = rows.Select(Map).OrderByDescending(x => x.Timestamp).ToList();
                 PlaceApiService.TryLearnPublicSyncOriginFromRawUrl(origin);
+                PlaceApiService.RememberSuccessfulCmsOrigin(origin);
                 return new RemoteHistoryFetchResult(RemoteHistoryFetchStatus.Ok, items, null);
             }
             catch (Exception ex)
