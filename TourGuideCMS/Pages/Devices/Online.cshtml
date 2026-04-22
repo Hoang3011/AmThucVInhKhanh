@@ -12,11 +12,33 @@
     Cần app cấu hình đúng URL CMS và (nếu có) khóa <code>X-Mobile-Key</code>.
 </p>
 
-<div class="alert alert-info py-2 mb-3">
-    <strong>Đang online (tab Bản đồ):</strong> @Model.OnlineCount
-    <span class="ms-3"><strong>Offline (trong danh sách dưới):</strong> @Model.OfflineCount</span>
-    <span class="ms-2 small">(mốc UTC: @Model.CutoffUtc.ToString("O"))</span>
+<div class="row g-3 mb-3">
+    <div class="col-12 col-md-4">
+        <div class="card border-success h-100">
+            <div class="card-body">
+                <div class="text-muted small">Đang online (tab Bản đồ)</div>
+                <div class="fs-3 fw-bold text-success">@Model.OnlineCount</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-md-4">
+        <div class="card border-secondary h-100">
+            <div class="card-body">
+                <div class="text-muted small">Offline (trong danh sách dưới)</div>
+                <div class="fs-3 fw-bold text-secondary">@Model.OfflineCount</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-md-4">
+        <div class="card border-primary h-100">
+            <div class="card-body">
+                <div class="text-muted small">Tổng số thiết bị</div>
+                <div class="fs-3 fw-bold text-primary">@(Model.OnlineCount + Model.OfflineCount)</div>
+            </div>
+        </div>
+    </div>
 </div>
+<p class="text-muted small mb-3">Mốc UTC: @Model.CutoffUtc.ToString("O")</p>
 
 @if (Model.Devices.Count == 0)
 {
