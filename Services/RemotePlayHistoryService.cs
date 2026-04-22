@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
+using Microsoft.Maui.Storage;
 using TourGuideApp2.Models;
 
 namespace TourGuideApp2.Services;
@@ -23,6 +24,9 @@ public readonly record struct RemoteHistoryFetchResult(
 public static class RemotePlayHistoryService
 {
     private static readonly HttpClient Http = CreateHttp();
+    private static readonly SemaphoreSlim CacheGate = new(1, 1);
+    private static string? _cachePath;
+    private static string CachePath => _cachePath ??= Path.Combine(FileSystem.AppDataDirectory, "remote-history-cache.json");
 
     private static HttpClient CreateHttp()
         => CmsTunnelHttp.CreateReliableHttpClient(TimeSpan.FromSeconds(32));
@@ -34,14 +38,14 @@ public static class RemotePlayHistoryService
     {
         var deviceInstallId = DeviceInstallIdService.GetOrCreate();
         if (string.IsNullOrWhiteSpace(deviceInstallId))
-            return new RemoteHistoryFetchResult(RemoteHistoryFetchStatus.Failed, [], "Không lấy được mã thiết bị.");
+            return new RemoteHistoryFetchResult(RemoteHistoryFetchStatus.Failed, await TryLoadCacheAsync().ConfigureAwait(false), "Không lấy được mã thiết bị.");
 
         var origins = PlaceApiService.GetCmsBaseUrlCandidatesForSync();
         if (origins.Count == 0)
         {
             return new RemoteHistoryFetchResult(
                 RemoteHistoryFetchStatus.SkippedNoCmsUrl,
-                [],
+                await TryLoadCacheAsync().ConfigureAwait(false),
                 "Chưa cấu hình URL API POI (Cài đặt hoặc bản build).");
         }
 
@@ -64,7 +68,7 @@ public static class RemotePlayHistoryService
                 {
                     return new RemoteHistoryFetchResult(
                         RemoteHistoryFetchStatus.Unauthorized,
-                        [],
+                        await TryLoadCacheAsync().ConfigureAwait(false),
                         "401: trong Cài đặt nhập Khóa đồng bộ CMS trùng App:MobileApiKey (hoặc để trống khóa trên CMS).");
                 }
 
@@ -87,6 +91,7 @@ public static class RemotePlayHistoryService
                 var items = rows.Select(Map).OrderByDescending(x => x.Timestamp).ToList();
                 PlaceApiService.TryLearnPublicSyncOriginFromRawUrl(origin);
                 PlaceApiService.RememberSuccessfulCmsOrigin(origin);
+                await TrySaveCacheAsync(items).ConfigureAwait(false);
                 return new RemoteHistoryFetchResult(RemoteHistoryFetchStatus.Ok, items, null);
             }
             catch (Exception ex)
@@ -98,8 +103,50 @@ public static class RemotePlayHistoryService
 
         return new RemoteHistoryFetchResult(
             RemoteHistoryFetchStatus.Failed,
-            [],
+            await TryLoadCacheAsync().ConfigureAwait(false),
             string.IsNullOrWhiteSpace(lastFailure) ? "Không kết nối được CMS." : lastFailure);
+    }
+
+    private static async Task TrySaveCacheAsync(List<HistoryEntry> items)
+    {
+        if (items.Count == 0)
+            return;
+
+        await CacheGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await using var s = File.Create(CachePath);
+            await JsonSerializer.SerializeAsync(s, items, new JsonSerializerOptions { WriteIndented = false }).ConfigureAwait(false);
+        }
+        catch
+        {
+            // best-effort
+        }
+        finally
+        {
+            CacheGate.Release();
+        }
+    }
+
+    private static async Task<IReadOnlyList<HistoryEntry>> TryLoadCacheAsync()
+    {
+        await CacheGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (!File.Exists(CachePath))
+                return [];
+            await using var s = File.OpenRead(CachePath);
+            return await JsonSerializer.DeserializeAsync<List<HistoryEntry>>(s, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }).ConfigureAwait(false)
+                   ?? [];
+        }
+        catch
+        {
+            return [];
+        }
+        finally
+        {
+            CacheGate.Release();
+        }
     }
 
     private static async Task<string> SafeReadAsync(HttpResponseMessage res)

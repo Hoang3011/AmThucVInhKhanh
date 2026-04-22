@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Maui.ApplicationModel;
 using Microsoft.Maui.Storage;
 using TourGuideApp2.Models;
 
@@ -6,6 +7,9 @@ namespace TourGuideApp2.Services;
 
 public static class HistoryLogService
 {
+    /// <summary>Bắn trên main thread sau khi ghi file lịch sử — tab Lịch sử có thể subscribe (không dùng MessagingCenter .NET 10).</summary>
+    public static event Action? PlaybackLogChanged;
+
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static string? _filePath;
 
@@ -43,7 +47,9 @@ public static class HistoryLogService
         }
     }
 
-    public static async Task AddAsync(string placeName, string source, string language, double? durationSeconds = null)
+    /// <param name="enqueueForRemoteSync">false = chỉ lưu lịch sử trên máy (vd. AutoGeo trong cooldown gửi CMS).</param>
+    public static async Task AddAsync(string placeName, string source, string language, double? durationSeconds = null,
+        bool enqueueForRemoteSync = true)
     {
         if (string.IsNullOrWhiteSpace(placeName))
             return;
@@ -73,7 +79,27 @@ public static class HistoryLogService
             await using var write = File.Create(FilePath);
             await JsonSerializer.SerializeAsync(write, items);
 
-            PlaySyncService.Enqueue(placeName, source, language, durationSeconds, playedAt);
+            if (enqueueForRemoteSync)
+                PlaySyncService.Enqueue(placeName, source, language, durationSeconds, playedAt);
+
+            try
+            {
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    try
+                    {
+                        PlaybackLogChanged?.Invoke();
+                    }
+                    catch
+                    {
+                        // bỏ qua
+                    }
+                });
+            }
+            catch
+            {
+                // bỏ qua
+            }
         }
         finally
         {

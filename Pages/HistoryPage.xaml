@@ -20,7 +20,7 @@
                 FontSize="11"
                 TextColor="#555555"
                 LineBreakMode="WordWrap"
-                Text="Đồng bộ CMS: …" />
+                Text="Đồng bộ nền: đang chuẩn bị…" />
         </VerticalStackLayout>
 
         <Border
@@ -120,7 +120,10 @@
         </Border>
 
         <Grid Grid.Row="2">
-            <CollectionView x:Name="historyList" Margin="0,10,0,0">
+            <CollectionView
+                x:Name="historyList"
+                Margin="0,10,0,0"
+                VerticalOptions="FillAndExpand">
                 <CollectionView.ItemTemplate>
                     <DataTemplate>
                         <Border Stroke="#E0E0E0" StrokeThickness="1" StrokeShape="RoundRectangle 12" Padding="10" Margin="0,0,0,8">

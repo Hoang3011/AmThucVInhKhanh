@@ -30,10 +30,7 @@ namespace TourGuideApp2
                     try
                     {
                         if (Connectivity.Current.NetworkAccess == NetworkAccess.Internet)
-                        {
-                            _ = PlaySyncService.FlushPendingAsync();
-                            CustomerRouteSyncService.TryFlushOnNetworkAvailable();
-                        }
+                            CustomerAppWarmSyncService.Schedule();
                     }
                     catch
                     {
@@ -52,15 +49,26 @@ namespace TourGuideApp2
             return new Window(new AppShell());
         }
 
+        protected override void OnStart()
+        {
+            base.OnStart();
+            try
+            {
+                CustomerAppWarmSyncService.Schedule();
+            }
+            catch
+            {
+                // bỏ qua
+            }
+        }
+
         protected override void OnResume()
         {
             base.OnResume();
             PremiumPaymentService.ClearShortLivedEntitlementMemory();
             try
             {
-                _ = PlaySyncService.FlushPendingAsync();
-                if (Connectivity.Current.NetworkAccess == NetworkAccess.Internet)
-                    CustomerRouteSyncService.TryFlushOnNetworkAvailable();
+                CustomerAppWarmSyncService.Schedule();
             }
             catch
             {

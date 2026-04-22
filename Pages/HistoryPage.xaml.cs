@@ -17,6 +17,20 @@ public partial class HistoryPage : ContentPage
     protected override void OnAppearing()
     {
         base.OnAppearing();
+        HistoryLogService.PlaybackLogChanged -= OnPlaybackLogChanged;
+        HistoryLogService.PlaybackLogChanged += OnPlaybackLogChanged;
+        CustomerAppWarmSyncService.Schedule();
+        _ = LoadHistoryAsync();
+    }
+
+    protected override void OnDisappearing()
+    {
+        HistoryLogService.PlaybackLogChanged -= OnPlaybackLogChanged;
+        base.OnDisappearing();
+    }
+
+    private void OnPlaybackLogChanged()
+    {
         _ = LoadHistoryAsync();
     }
 
@@ -33,7 +47,8 @@ public partial class HistoryPage : ContentPage
             {
                 await MainThread.InvokeOnMainThreadAsync(() =>
                 {
-                    syncStatusLabel.Text = "Không tải được lịch sử (lỗi tạm thời). Thử lại tab Lịch sử.";
+                    syncStatusLabel.Text =
+                        "Đang hiển thị lịch sử trên máy bạn. Nếu vừa mở app, chờ vài giây rồi bấm Làm mới.";
                     syncStatusLabel.TextColor = Colors.DimGray;
                     emptyStateLabel.IsVisible = true;
                     historyList.ItemsSource = Array.Empty<HistoryEntryViewItem>();
@@ -116,24 +131,28 @@ public partial class HistoryPage : ContentPage
 
     private static (string Text, Color Color) BuildSyncStatusText(RemoteHistoryFetchResult fetch)
     {
+        const string queuedHint =
+            "Lượt nghe luôn được lưu trên máy và xếp hàng; khi web CMS chạy và mạng tới được máy chủ, app tự gửi — không cần mở web trước khi dùng app.";
+
         return fetch.Status switch
         {
             RemoteHistoryFetchStatus.Ok =>
-                ($"Đồng bộ CMS: OK — {fetch.Items.Count} lượt trên máy chủ",
-                 Color.FromArgb("#2E7D32")),
+                ($"Đồng bộ nền: đã ghép {fetch.Items.Count} lượt từ máy chủ với lịch sử trên máy bạn.",
+                    Color.FromArgb("#2E7D32")),
 
             RemoteHistoryFetchStatus.SkippedNoCmsUrl =>
-                ("Đồng bộ CMS: Chưa cấu hình URL CMS", Color.FromArgb("#E65100")),
+                ("Đồng bộ nền đang chạy: lịch sử chỉ trên máy bạn. Khi có URL trong Cài đặt, app sẽ tự ghép thêm dữ liệu từ web.",
+                    Color.FromArgb("#1565C0")),
 
-            RemoteHistoryFetchStatus.Failed when fetch.Message?.Contains("Connection", StringComparison.OrdinalIgnoreCase) == true
-                || fetch.Message?.Contains("failure", StringComparison.OrdinalIgnoreCase) == true =>
-                ("Đồng bộ CMS: CMS đang tắt hoặc không kết nối được.\nLog đã được lưu cục bộ, sẽ tự động gửi khi bật CMS.",
-                 Color.FromArgb("#F57C00")),   // màu cam thay vì đỏ
+            RemoteHistoryFetchStatus.Unauthorized =>
+                ("Đồng bộ nền: lịch sử trên máy vẫn đầy đủ. Nếu cần xem thêm trên web: mở Cài đặt và nhập «Khóa đồng bộ CMS» trùng MobileApiKey trên CMS (hoặc tắt khóa trên CMS).",
+                    Color.FromArgb("#1565C0")),
 
             RemoteHistoryFetchStatus.Failed =>
-                ($"Đồng bộ CMS: lỗi — {fetch.Message}", Color.FromArgb("#C62828")),
+                ("Đồng bộ nền luôn bật — " + queuedHint,
+                    Color.FromArgb("#1565C0")),
 
-            _ => ("Đồng bộ CMS: " + (fetch.Message ?? "không xác định"), Color.FromArgb("#555555"))
+            _ => ("Đồng bộ nền: " + queuedHint, Color.FromArgb("#1565C0"))
         };
     }
 
@@ -168,7 +187,8 @@ public partial class HistoryPage : ContentPage
         var ub = b.Timestamp.Kind == DateTimeKind.Unspecified
             ? DateTime.SpecifyKind(b.Timestamp, DateTimeKind.Local).ToUniversalTime()
             : b.Timestamp.ToUniversalTime();
-        return Math.Abs((ua - ub).TotalSeconds) < 5;
+        // Trước đây 5s làm “dính” nhiều lượt nghe gần nhau thành một — tab Lịch sử mất chi tiết sau khi sync CMS.
+        return Math.Abs((ua - ub).TotalSeconds) < 1.05;
     }
 
     private void BindStatistics(List<HistoryEntry> entries)

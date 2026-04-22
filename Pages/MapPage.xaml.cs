@@ -99,6 +99,26 @@ public partial class MapPage : ContentPage
     /// <summary>Ưu tiên POI từ API khi đã cấu hình <c>PoiApiUrl</c> (+ <c>PoiApiKey</c> cho Supabase); không thì đọc <c>VinhKhanh.db</c> cục bộ.</summary>
     private async Task<List<Place>> LoadPlacesAsync()
     {
+        // Có URL remote + đã từng cache: hiển thị ngay (A536E + Wi‑Fi/4G khi CMS tắt — tránh chờ HTTP lâu), đồng thời refresh nền.
+        if (PlaceApiService.HasRemoteApiConfigured())
+        {
+            try
+            {
+                var early = await PlaceRemoteCacheService.TryLoadAsync();
+                if (early.Count > 0)
+                {
+                    var filtered = await DeletedPlacesTracker.FilterPlacesAsync(early);
+                    await FillMissingNarrationFromLocalAsync(filtered);
+                    _ = SoftRefreshRemotePlacesInBackgroundAsync();
+                    return SanitizePlaces(filtered);
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+        }
+
         var remote = await PlaceApiService.TryGetRemotePlacesAsync();
         if (remote is { Count: > 0 })
         {
@@ -110,10 +130,51 @@ public partial class MapPage : ContentPage
 
         if (PlaceApiService.HasRemoteApiConfigured())
         {
-            UpdateGeoStatusLabel("Khong tai duoc API, dang dung du lieu cuc bo");
+            try
+            {
+                var cached = await PlaceRemoteCacheService.TryLoadAsync();
+                if (cached.Count > 0)
+                {
+                    var filtered = await DeletedPlacesTracker.FilterPlacesAsync(cached);
+                    await FillMissingNarrationFromLocalAsync(filtered);
+                    return SanitizePlaces(filtered);
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+
+            UpdateGeoStatusLabel("POI trên máy — đồng bộ nền vẫn chạy; tự cập nhật khi tới được máy chủ.");
         }
 
-        return SanitizePlaces(await LoadPlacesFromLocalDatabaseAsync());
+        var bundle = await LoadPlacesFromLocalDatabaseAsync();
+        var fb = await DeletedPlacesTracker.FilterPlacesAsync(bundle);
+        return SanitizePlaces(fb);
+    }
+
+    /// <summary>Khi đã có cache để mở map nhanh — thử sync lại POI ở nền, cập nhật picker nếu danh sách đổi.</summary>
+    private async Task SoftRefreshRemotePlacesInBackgroundAsync()
+    {
+        try
+        {
+            var remote = await PlaceApiService.TryGetRemotePlacesAsync();
+            if (remote is null || remote.Count == 0)
+                return;
+
+            await FillMissingNarrationFromLocalAsync(remote);
+            var next = SanitizePlaces(remote);
+            await MainThread.InvokeOnMainThreadAsync(() =>
+            {
+                _pois = next;
+                RebuildPoiIndexFromCurrentPois();
+                PopulateQrPicker();
+            });
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"SoftRefreshRemotePlacesInBackgroundAsync: {ex.Message}");
+        }
     }
 
     private void RebuildPoiIndexFromCurrentPois()
@@ -403,7 +464,7 @@ public partial class MapPage : ContentPage
         CancelBusStopSpeech();
         var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(-1, lang, text);
         UpdateLastPlayedLabel("Chỉ đường (rẽ)", "Chỉ đường");
-        PlaySyncService.Enqueue("Chỉ đường (rẽ)", "Chỉ đường", lang, durationSeconds, DateTime.Now);
+        await HistoryLogService.AddAsync("Chỉ đường (rẽ)", "Chỉ đường", lang, durationSeconds);
         _nextFootNavCueIndex++;
         _lastFootNavTtsUtc = now;
     }
@@ -487,8 +548,8 @@ public partial class MapPage : ContentPage
 
         try
         {
-            // Không await — tránh chặn luồng UI / race với WebView khi cold start (cài mới, vừa quét QR).
-            _ = AutoSyncPlaybackLogsAsync();
+            // Không await — POI + lượt phát/tuyến chờ (cùng pipeline với tab Khám phá / OnResume).
+            CustomerAppWarmSyncService.Schedule();
 
             if (OperatingSystem.IsAndroid())
                 await Task.Delay(280);
@@ -1618,7 +1679,7 @@ for (var i = 0; i < pois.length; i++) {{
             var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(
                 poiIndex, _selectedLanguage, text, ct, place.Id > 0 ? place.Id : null);
             UpdateLastPlayedLabel(place.Name, "BusStop");
-            PlaySyncService.Enqueue(place.Name, "BusStop", _selectedLanguage, durationSeconds, DateTime.Now);
+            await HistoryLogService.AddAsync(place.Name, "BusStop", _selectedLanguage, durationSeconds);
         }
         catch (OperationCanceledException)
         {
@@ -1894,7 +1955,7 @@ for (var i = 0; i < pois.length; i++) {{
                 var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(
                     poiIndex, ttsLang, text, default, place.Id > 0 ? place.Id : null);
                 UpdateLastPlayedLabel(place.Name, "QR");
-                PlaySyncService.Enqueue(place.Name, "QR", ttsLang, durationSeconds, DateTime.Now);
+                await HistoryLogService.AddAsync(place.Name, "QR", ttsLang, durationSeconds);
             }
             catch (OperationCanceledException)
             {
@@ -2335,10 +2396,8 @@ for (var i = 0; i < pois.length; i++) {{
             RegisterAutoGeoPlaybackCompleted(speakPoiIndex);
             UpdateLastPlayedLabel(speakPlace.Name, "AutoGeo");
             UpdateCooldownLabel(speakPoiIndex);
-            if (ShouldLogAutoGeo(speakPoiIndex))
-            {
-                PlaySyncService.Enqueue(speakPlace.Name, "AutoGeo", speakTtsLang, durationSeconds, DateTime.Now);
-            }
+            var pushRemote = ShouldLogAutoGeo(speakPoiIndex);
+            await HistoryLogService.AddAsync(speakPlace.Name, "AutoGeo", speakTtsLang, durationSeconds, pushRemote);
         }
         catch (OperationCanceledException)
         {
@@ -2974,7 +3033,7 @@ for (var i = 0; i < pois.length; i++) {{
                 CancelBusStopSpeech();
                 var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(-1, lang, tts);
                 UpdateLastPlayedLabel(label, "Chỉ đường");
-                PlaySyncService.Enqueue(label, "Chỉ đường", lang, durationSeconds, DateTime.Now);
+                await HistoryLogService.AddAsync(label, "Chỉ đường", lang, durationSeconds);
             }
             catch
             {
@@ -3035,7 +3094,7 @@ for (var i = 0; i < pois.length; i++) {{
             var durationSeconds = await NarrationQueueService.EnqueuePoiOrTtsAsync(
                 poiIndex, ttsLang, text ?? "", default, place.Id > 0 ? place.Id : null);
             UpdateLastPlayedLabel(place.Name, "Map");
-            PlaySyncService.Enqueue(place.Name, "Map", ttsLang, durationSeconds, DateTime.Now);
+            await HistoryLogService.AddAsync(place.Name, "Map", ttsLang, durationSeconds);
         }
         catch { }
     }
@@ -3109,20 +3168,5 @@ for (var i = 0; i < pois.length; i++) {{
         if (normalized.StartsWith("vi", StringComparison.Ordinal))
             return "vi";
         return "vi";
-    }
-    private async Task AutoSyncPlaybackLogsAsync()
-    {
-        try
-        {
-            // Gọi service đã có sẵn trong project (PlaySyncService tự xử lý queue local + gửi HTTP lên CMS)
-            await PlaySyncService.FlushPendingAsync();   // Đây là hàm đồng bộ pending logs
-
-            System.Diagnostics.Debug.WriteLine("✅ [MapPage] Đã tự động sync log lượt phát thuyết minh");
-        }
-        catch (Exception ex)
-        {
-            // Không làm app crash nếu CMS đang tắt hoặc lỗi mạng
-            System.Diagnostics.Debug.WriteLine($"[MapPage] Sync log thất bại (bình thường nếu CMS tắt): {ex.Message}");
-        }
     }
 }

@@ -158,9 +158,70 @@ public static class PlaceApiService
         }
     }
 
-    /// <summary>Chỉ khi **không** có Wi‑Fi/Ethernet (4G thuần / Bluetooth…) — tránh bỏ LAN khi nhà vẫn Wi‑Fi + SIM bật (CMS chỉ LAN).</summary>
+    private static bool HasWifiOrEthernetInProfiles()
+    {
+        try
+        {
+            foreach (var p in Connectivity.Current.ConnectionProfiles)
+            {
+                if (p == ConnectionProfile.WiFi || p == ConnectionProfile.Ethernet)
+                    return true;
+            }
+        }
+        catch
+        {
+            // bỏ qua
+        }
+
+        return false;
+    }
+
+    private static bool PrefsPoiApiUrlIsLanHost()
+    {
+        var p = (Preferences.Default.Get(PoiApiUrlPreferenceKey, string.Empty) ?? string.Empty).Trim();
+        return Uri.TryCreate(p, UriKind.Absolute, out var u) && IsLikelyLocalOnlyHost(u.Host);
+    }
+
+    private static bool HasExplicitPublicCmsBaseInPreferences()
+    {
+        var explicitBase = (Preferences.Default.Get(CmsListenPayPublicBaseUrlKey, "") ?? "").Trim().TrimEnd('/');
+        return !string.IsNullOrEmpty(explicitBase)
+               && Uri.TryCreate(explicitBase, UriKind.Absolute, out var ex)
+               && !IsHostUnusableForPhoneQr(ex.Host)
+               && !IsLikelyLocalOnlyHost(ex.Host);
+    }
+
+    /// <summary>
+    /// 4G thuần: bỏ LAN. Wi‑Fi nhưng prefs vẫn trỏ API LAN nhà trong khi đã có tunnel (prefs) hoặc đã từng sync public
+    /// — cũng bỏ LAN (đi quán Wi‑Fi khác / khác VLAN vẫn không treo vào IP LAN nhà).
+    /// </summary>
     private static bool TreatAsOffHomeLanForCms()
-        => PreferReachablePublicCmsEndpointsOnly();
+    {
+        if (PreferReachablePublicCmsEndpointsOnly())
+            return true;
+
+        try
+        {
+            var access = Connectivity.Current.NetworkAccess;
+            if (access is not NetworkAccess.Internet and not NetworkAccess.ConstrainedInternet)
+                return false;
+
+            if (!HasWifiOrEthernetInProfiles())
+                return false;
+
+            if (!PrefsPoiApiUrlIsLanHost())
+                return false;
+
+            if (GetLastSuccessfulNonLanOrigin() is not null)
+                return true;
+
+            return HasExplicitPublicCmsBaseInPreferences();
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     /// <summary>Ghi nhớ gốc tunnel/public sau bất kỳ API CMS thành công — dùng sắp xếp ưu tiên lần sau.</summary>
     public static void RememberSuccessfulCmsOrigin(string? rawUrlOrOrigin)
@@ -552,7 +613,8 @@ public static class PlaceApiService
 
                 using var perUrlCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 var isLanHost = Uri.TryCreate(apiUrl, UriKind.Absolute, out var hostUri) && IsLikelyLocalOnlyHost(hostUri.Host);
-                perUrlCts.CancelAfter(isLanHost ? TimeSpan.FromSeconds(4) : TimeSpan.FromSeconds(32));
+                // CMS tắt / 4G+Wi‑Fi: timeout dài làm map “đơ” — giữ LAN ngắn, public ~12s.
+                perUrlCts.CancelAfter(isLanHost ? TimeSpan.FromSeconds(4) : TimeSpan.FromSeconds(12));
 
                 using var response = await PlacesFetchHttp.SendAsync(request, perUrlCts.Token).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
@@ -583,6 +645,16 @@ public static class PlaceApiService
                     // Chỉ học prefs sau khi chắc chắn JSON hợp lệ — tránh 200 HTML (ngrok/WAF) ghi đè tunnel.
                     TryLearnPublicSyncOriginFromRawUrl(apiUrl);
                     RememberSuccessfulCmsOrigin(apiUrl);
+                    try
+                    {
+                        var previous = await PlaceRemoteCacheService.TryLoadAsync().ConfigureAwait(false);
+                        await DeletedPlacesTracker.ApplyRemoteDiffAsync(previous, mapped).ConfigureAwait(false);
+                        await PlaceRemoteCacheService.SaveAsync(mapped).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // best-effort
+                    }
                     return mapped;
                 }
             }
@@ -610,7 +682,10 @@ public static class PlaceApiService
             return remote;
 
         var local = await PlaceLocalRepository.TryLoadAsync();
-        return local.Places.Count > 0 ? local.Places : [];
+        if (local.Places.Count == 0)
+            return [];
+
+        return await DeletedPlacesTracker.FilterPlacesAsync(local.Places).ConfigureAwait(false);
     }
 
     private static List<PoiApiItem> ParseApiItems(string json)
