@@ -50,6 +50,9 @@ public static class PublicSiteUrls
     public static string ListenPayPayload(HttpContext ctx, IConfiguration config, int placeId)
         => $"{SiteRootForLinks(ctx, config)}/Listen/Pay?placeId={placeId}";
 
+    public static string ListenPreviewAllPayload(HttpContext ctx, IConfiguration config)
+        => $"{SiteRootForLinks(ctx, config)}/Listen/PreviewAll";
+
     /// <summary>Chỉ đường dẫn <c>/install/launch</c> (không tham số).</summary>
     public static string QrAppInstallLaunchUrl(HttpContext ctx, IConfiguration config)
         => $"{SiteRootForLinks(ctx, config)}/install/launch";
@@ -73,6 +76,9 @@ public static class PublicSiteUrls
     /// <summary>URL ảnh QR (cache-bust) để trình duyệt không giữ PNG cũ.</summary>
     public static string QrAppImageSrc(HttpContext ctx, IConfiguration config)
         => $"{SiteRootForLinks(ctx, config)}/qr/app?cb={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+
+    public static string QrListenAllImageSrc(HttpContext ctx, IConfiguration config)
+        => $"{SiteRootForLinks(ctx, config)}/qr/listen/all?cb={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
 
     /// <summary>
     /// Chuỗi hiển thị / copy — trùng nội dung mã QR (PNG <c>/qr/app</c>).

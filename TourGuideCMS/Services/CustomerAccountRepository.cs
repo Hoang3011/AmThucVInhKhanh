@@ -444,6 +444,34 @@ public sealed class CustomerAccountRepository
         await cmd.ExecuteNonQueryAsync();
     }
 
+    public async Task<int> CountPlaysByDevicePlaceLanguageAsync(string source, string deviceInstallId, string placeName, string language)
+    {
+        source = (source ?? string.Empty).Trim();
+        deviceInstallId = (deviceInstallId ?? string.Empty).Trim();
+        placeName = (placeName ?? string.Empty).Trim();
+        language = (language ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(deviceInstallId) || string.IsNullOrWhiteSpace(placeName) || string.IsNullOrWhiteSpace(language))
+            return 0;
+
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(1)
+            FROM NarrationPlay
+            WHERE Source = @s
+              AND DeviceInstallId = @d
+              AND PlaceName = @p
+              AND IFNULL(Language, '') = @l
+            """;
+        cmd.Parameters.AddWithValue("@s", source);
+        cmd.Parameters.AddWithValue("@d", deviceInstallId);
+        cmd.Parameters.AddWithValue("@p", placeName);
+        cmd.Parameters.AddWithValue("@l", language);
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync());
+    }
+
     public async Task<IReadOnlyList<NarrationPlayRow>> ListRecentPlaysAsync(int take = 300)
     {
         await using var connection = Open();

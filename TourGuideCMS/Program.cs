@@ -108,6 +108,20 @@ app.MapGet("/qr/places/{id:int}", async (HttpContext http, int id, PlaceReposito
     return Results.File(bytes, "image/png");
 });
 
+// QR PNG: 1 mã tổng mở trang nghe thử tất cả quán + ngôn ngữ.
+app.MapGet("/qr/listen/all", (HttpContext http, IConfiguration config) =>
+{
+    http.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate, max-age=0";
+    http.Response.Headers.Pragma = "no-cache";
+
+    var content = PublicSiteUrls.ListenPreviewAllPayload(http, config);
+    using var gen = new QRCodeGenerator();
+    using var data = gen.CreateQrCode(content, QRCodeGenerator.ECCLevel.Q);
+    var png = new PngByteQRCode(data);
+    var bytes = png.GetGraphic(8);
+    return Results.File(bytes, "image/png");
+});
+
 // APK local (LAN): đặt file tại wwwroot/downloads/AmThucVinhKhanh.apk để điện thoại quét QR là bật prompt tải/cài.
 app.MapGet("/downloads/AmThucVinhKhanh.apk", (HttpContext http, IWebHostEnvironment env) =>
 {
@@ -357,6 +371,66 @@ app.MapPost("/api/plays/log", async (HttpRequest req, CustomerAccountRepository 
     return Results.Ok(new { ok = true });
 });
 
+// Nghe thử web: tối đa 3 lần mỗi thiết bị cho từng quán + ngôn ngữ.
+app.MapPost("/api/listen/preview/play", async (HttpRequest req, PlaceRepository places, CustomerAccountRepository repo) =>
+{
+    var body = await System.Text.Json.JsonSerializer.DeserializeAsync<PreviewListenBody>(
+        req.Body,
+        new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+    if (body is null || body.PlaceId <= 0 || string.IsNullOrWhiteSpace(body.DeviceInstallId) || string.IsNullOrWhiteSpace(body.Language))
+        return Results.BadRequest(new { message = "Thiếu placeId, deviceInstallId hoặc language." });
+
+    var place = await places.GetAsync(body.PlaceId);
+    if (place is null)
+        return Results.NotFound(new { message = "Không tìm thấy quán/POI." });
+
+    var language = body.Language.Trim().ToLowerInvariant();
+    string text = language switch
+    {
+        "vi" => place.VietnameseAudioText,
+        "en" => place.EnglishAudioText,
+        "zh" => place.ChineseAudioText,
+        "ja" => place.JapaneseAudioText,
+        _ => ""
+    };
+    // Fallback để trang web luôn có nội dung nghe thử giống app.
+    if (string.IsNullOrWhiteSpace(text))
+        text = !string.IsNullOrWhiteSpace(place.VietnameseAudioText) ? place.VietnameseAudioText : place.Description;
+    if (string.IsNullOrWhiteSpace(text))
+        return Results.BadRequest(new { message = "POI chưa có nội dung ngôn ngữ này." });
+
+    var deviceId = body.DeviceInstallId.Trim();
+    if (deviceId.Length < 8)
+        return Results.BadRequest(new { message = "Mã thiết bị không hợp lệ." });
+
+    const string source = "WebPreviewAll";
+    const int limit = 3;
+    var count = await repo.CountPlaysByDevicePlaceLanguageAsync(source, deviceId, place.Name, language);
+    if (count >= limit)
+        return Results.Json(new { ok = false, message = "Đã hết 3 lượt nghe thử cho ngôn ngữ này.", remaining = 0 });
+
+    await repo.AddPlayAsync(
+        customerUserId: null,
+        deviceInstallId: deviceId,
+        deviceName: "Web Browser",
+        placeName: place.Name,
+        source: source,
+        language: language,
+        durationSeconds: null,
+        playedAtUtc: DateTime.UtcNow);
+
+    var remaining = Math.Max(0, limit - (count + 1));
+    return Results.Json(new
+    {
+        ok = true,
+        placeId = place.Id,
+        placeName = place.Name,
+        language,
+        text,
+        remaining
+    });
+});
+
 // Lịch sử lượt phát theo khách (app đồng bộ với trang /Plays)
 app.MapGet("/api/plays/history", async (HttpRequest req, CustomerAccountRepository repo, IConfiguration config) =>
 {
@@ -594,4 +668,11 @@ internal sealed class DeviceHeartbeatBody
     public string? AppVersion { get; set; }
     /// <summary>Chỉ khi <c>true</c> mới coi là đang mở tab Bản đồ trên app.</summary>
     public bool? IsOnMapTab { get; set; }
+}
+
+internal sealed class PreviewListenBody
+{
+    public int PlaceId { get; set; }
+    public string? DeviceInstallId { get; set; }
+    public string? Language { get; set; }
 }

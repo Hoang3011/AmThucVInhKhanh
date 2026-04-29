@@ -1,0 +1,112 @@
+@page "/Listen/PreviewAll"
+@model TourGuideCMS.Pages.Listen.PreviewAllModel
+@{
+    Layout = "_LayoutPublic";
+    ViewData["Title"] = "Nghe thử tất cả quán";
+}
+
+<div class="container py-3" style="max-width: 980px;">
+    <h3 class="mb-2">Nghe thử thuyết minh tất cả quán</h3>
+    <p class="small text-muted mb-3">
+        Mỗi thiết bị được nghe tối đa <strong>3 lần / ngôn ngữ / quán</strong>. Khi hết lượt, vui lòng tải app để nghe không giới hạn.
+    </p>
+    <div id="previewAlert" class="alert alert-info py-2 small d-none"></div>
+
+    <div class="row g-3">
+        @foreach (var p in Model.Places)
+        {
+            <div class="col-12 col-md-6">
+                <div class="card h-100 shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title mb-1">@p.Name</h5>
+                        <div class="small text-muted mb-2">@p.Address</div>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button type="button" class="btn btn-outline-primary btn-sm" onclick="listen(@p.Id, 'vi')">Nghe tiếng Việt</button>
+                            <button type="button" class="btn btn-outline-primary btn-sm" onclick="listen(@p.Id, 'en')">Listen English</button>
+                            <button type="button" class="btn btn-outline-primary btn-sm" onclick="listen(@p.Id, 'zh')">中文</button>
+                            <button type="button" class="btn btn-outline-primary btn-sm" onclick="listen(@p.Id, 'ja')">日本語</button>
+                        </div>
+                        <div id="text-@p.Id" class="small mt-2" style="white-space:pre-wrap"></div>
+                        <div id="remain-@p.Id" class="small text-secondary mt-2"></div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    <hr class="my-4" />
+    <div class="text-center">
+        <h5 class="mb-2">Tải app để nghe bản không giới hạn</h5>
+        <img src="/Resources/QR.png" alt="QR tải app" class="img-fluid shadow-sm" style="max-width:260px;border:1px solid #dee2e6;border-radius:12px;" />
+        <p class="small mt-2 mb-0">Hoặc mở trực tiếp: <a href="@Model.AppInstallUrl">@Model.AppInstallUrl</a></p>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        (function () {
+            var key = 'vk_web_preview_did';
+            var id = localStorage.getItem(key);
+            if (!id) {
+                try { id = crypto.randomUUID(); } catch (e) { id = 'w' + Math.random().toString(36).slice(2) + Date.now(); }
+                localStorage.setItem(key, id);
+            }
+            window.webPreviewDeviceId = id;
+        })();
+
+        function speakText(text, language) {
+            if (!window.speechSynthesis) return false;
+            window.speechSynthesis.cancel();
+            var u = new SpeechSynthesisUtterance(text);
+            u.lang = language === 'vi' ? 'vi-VN'
+                : language === 'en' ? 'en-US'
+                : language === 'zh' ? 'zh-CN'
+                : language === 'ja' ? 'ja-JP'
+                : 'vi-VN';
+            window.speechSynthesis.speak(u);
+            return true;
+        }
+
+        async function listen(placeId, language) {
+            var alertBox = document.getElementById('previewAlert');
+            alertBox.className = 'alert alert-info py-2 small';
+            alertBox.textContent = 'Đang tải nội dung nghe thử...';
+            alertBox.classList.remove('d-none');
+            try {
+                var res = await fetch('/api/listen/preview/play', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        placeId: placeId,
+                        language: language,
+                        deviceInstallId: window.webPreviewDeviceId || ''
+                    })
+                });
+                var data = await res.json();
+                if (!res.ok || !data.ok) {
+                    alertBox.className = 'alert alert-warning py-2 small';
+                    alertBox.textContent = data.message || 'Không thể phát nội dung lúc này.';
+                    return;
+                }
+
+                var textEl = document.getElementById('text-' + placeId);
+                if (textEl) {
+                    textEl.textContent = data.text || '';
+                }
+
+                var spoken = speakText(data.text || '', language);
+                alertBox.className = 'alert alert-success py-2 small';
+                alertBox.textContent = (spoken ? 'Đang phát: ' : 'Đã hiển thị nội dung: ')
+                    + data.placeName + ' (' + language + '). Còn ' + data.remaining + ' lượt.';
+
+                var remainEl = document.getElementById('remain-' + placeId);
+                if (remainEl) {
+                    remainEl.textContent = 'Ngôn ngữ ' + language + ': còn ' + data.remaining + '/3 lượt trên thiết bị này.';
+                }
+            } catch (e) {
+                alertBox.className = 'alert alert-warning py-2 small';
+                alertBox.textContent = 'Lỗi mạng, vui lòng thử lại.';
+            }
+        }
+    </script>
+}

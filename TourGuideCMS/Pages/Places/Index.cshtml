@@ -9,6 +9,17 @@
     <a class="btn btn-primary" asp-page="Create">Thêm POI</a>
 </div>
 
+<div class="card mb-3">
+    <div class="card-body d-flex flex-wrap gap-3 align-items-center">
+        <img src="@Model.PublicPreviewQrImageSrc" alt="QR nghe thử tất cả quán" style="width:110px;height:110px;border:1px solid #dee2e6;border-radius:10px;padding:6px;background:#fff;" />
+        <div>
+            <h6 class="mb-1">QR nghe thử tất cả quán</h6>
+            <div class="small text-muted mb-1">1 mã duy nhất cho khách: vào trang nghe thử tất cả POI và tất cả ngôn ngữ.</div>
+            <a href="@Model.PublicPreviewAllUrl" target="_blank" rel="noopener">@Model.PublicPreviewAllUrl</a>
+        </div>
+    </div>
+</div>
+
 <table class="table table-striped table-sm">
     <thead>
         <tr>
@@ -18,7 +29,6 @@
             <th>Lượt vào quán</th>
             <th>Tọa độ</th>
             <th>Bán kính (m)</th>
-            <th>QR</th>
             <th></th>
         </tr>
     </thead>
@@ -41,10 +51,6 @@
             </td>
             <td>@p.Latitude.ToString("F5"), @p.Longitude.ToString("F5")</td>
             <td>@p.ActivationRadiusMeters</td>
-            <td>
-                <img src="/qr/places/@p.Id" alt="QR @p.Id" style="width:70px;height:70px;border:1px solid #eee;border-radius:8px;background:#fff;padding:4px;" />
-                <div class="text-muted" style="font-size:12px">app://poi?id=@p.Id</div>
-            </td>
             <td>
                 <a asp-page="Heatmap" asp-route-id="@p.Id">Heatmap</a> |
                 <a asp-page="Edit" asp-route-id="@p.Id">Sửa</a> |
