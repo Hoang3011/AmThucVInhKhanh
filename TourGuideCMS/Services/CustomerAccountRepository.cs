@@ -223,6 +223,59 @@ public sealed class CustomerAccountRepository
         return list;
     }
 
+    /// <summary>
+    /// Trang admin /Devices/Online: gộp nhiều <c>DeviceInstallId</c> (cài lại app, v.v.) cùng một thiết bị theo
+    /// cùng quy tắc với <see cref="ListCustomerDevicesAsync"/> — mỗi khóa chỉ một dòng, ưu tiên lần ping mới nhất.
+    /// API <c>/api/devices/presence</c> vẫn dùng <see cref="ListDevicePresenceAsync"/> (đủ từng install id).
+    /// </summary>
+    public async Task<IReadOnlyList<DevicePresenceRow>> ListDevicePresenceDedupedForAdminAsync(int maxRows = 500)
+    {
+        maxRows = Math.Clamp(maxRows, 1, 2000);
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        var list = new List<DevicePresenceRow>();
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT DeviceInstallId, LastSeenUtc, IsOnMap, Platform, AppVersion
+            FROM (
+                SELECT h.DeviceInstallId,
+                       h.LastSeenUtc,
+                       h.IsOnMap,
+                       h.Platform,
+                       h.AppVersion,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY lower(trim(COALESCE(NULLIF(d.DeviceName, ''), d.DeviceInstallId, h.DeviceInstallId)))
+                           ORDER BY datetime(h.LastSeenUtc) DESC
+                       ) AS rn
+                FROM AppDeviceHeartbeat h
+                LEFT JOIN DeviceRouteSnapshot d ON d.DeviceInstallId = h.DeviceInstallId
+            ) x
+            WHERE x.rn = 1
+            ORDER BY datetime(x.LastSeenUtc) DESC
+            LIMIT @lim;
+            """;
+        cmd.Parameters.AddWithValue("@lim", maxRows);
+        await using var r = await cmd.ExecuteReaderAsync();
+        while (await r.ReadAsync())
+        {
+            var devId = r.GetString(0);
+            var lsRaw = r.GetString(1);
+            var ls = DateTime.TryParse(lsRaw, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed)
+                ? parsed.ToUniversalTime()
+                : DateTime.MinValue;
+            var onMap = !r.IsDBNull(2) && r.GetInt32(2) != 0;
+            list.Add(new DevicePresenceRow(
+                devId,
+                ls,
+                onMap,
+                r.IsDBNull(3) ? null : r.GetString(3),
+                r.IsDBNull(4) ? null : r.GetString(4)));
+        }
+
+        return list;
+    }
+
     public async Task EnsureSchemaAsync()
     {
         await using var c = Open();
@@ -718,6 +771,35 @@ public sealed class CustomerAccountRepository
         return list;
     }
 
+    public async Task<IReadOnlyList<DeviceRouteJsonRow>> ListDeviceRouteJsonAsync(int take = 2000)
+    {
+        take = Math.Clamp(take, 1, 10000);
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        var list = new List<DeviceRouteJsonRow>();
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT DeviceInstallId, DeviceName, CustomerUserId, PointsJson, UpdatedAtUtc
+            FROM DeviceRouteSnapshot
+            ORDER BY datetime(UpdatedAtUtc) DESC
+            LIMIT @lim
+            """;
+        cmd.Parameters.AddWithValue("@lim", take);
+        await using var r = await cmd.ExecuteReaderAsync();
+        while (await r.ReadAsync())
+        {
+            list.Add(new DeviceRouteJsonRow(
+                r.GetString(0),
+                r.IsDBNull(1) ? null : r.GetString(1),
+                r.IsDBNull(2) ? null : r.GetInt32(2),
+                r.IsDBNull(3) ? "[]" : r.GetString(3),
+                DateTime.TryParse(r.GetString(4), out var dt) ? dt : DateTime.MinValue));
+        }
+
+        return list;
+    }
+
     /// <summary>Tổng lượt phát theo địa điểm và nguồn (QR, Map, …).</summary>
     public async Task<IReadOnlyList<PlayAggregateRow>> GetAggregatesByPlaceAsync()
     {
@@ -1080,3 +1162,10 @@ public sealed record CustomerDeviceRow(
     DateTime? LastSeenUtc,
     string? Platform,
     string? AppVersion);
+
+public sealed record DeviceRouteJsonRow(
+    string DeviceInstallId,
+    string? DeviceName,
+    int? CustomerUserId,
+    string PointsJson,
+    DateTime UpdatedAtUtc);

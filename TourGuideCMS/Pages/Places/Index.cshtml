@@ -15,6 +15,7 @@
             <th>Id</th>
             <th>Tên</th>
             <th>Ưu tiên</th>
+            <th>Lượt vào quán</th>
             <th>Tọa độ</th>
             <th>Bán kính (m)</th>
             <th>QR</th>
@@ -28,6 +29,16 @@
             <td>@p.Id</td>
             <td>@p.Name</td>
             <td>@p.Priority</td>
+            <td>
+                @{
+                    var visits = Model.VisitCountByPlaceId.TryGetValue(p.Id, out var cnt) ? cnt : 0;
+                }
+                <strong>@visits</strong>
+                @if (visits > 0 && visits == Model.HighestVisitCount)
+                {
+                    <span class="badge text-bg-success ms-1">Nhiều nhất</span>
+                }
+            </td>
             <td>@p.Latitude.ToString("F5"), @p.Longitude.ToString("F5")</td>
             <td>@p.ActivationRadiusMeters</td>
             <td>
@@ -35,6 +46,7 @@
                 <div class="text-muted" style="font-size:12px">app://poi?id=@p.Id</div>
             </td>
             <td>
+                <a asp-page="Heatmap" asp-route-id="@p.Id">Heatmap</a> |
                 <a asp-page="Edit" asp-route-id="@p.Id">Sửa</a> |
                 <a asp-page="Delete" asp-route-id="@p.Id" class="text-danger">Xóa</a>
             </td>

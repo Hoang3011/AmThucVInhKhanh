@@ -29,7 +29,7 @@ public class OnlineModel : PageModel
     public async Task OnGetAsync()
     {
         CutoffUtc = DateTime.UtcNow - OnlineWindow;
-        Devices = await _repo.ListDevicePresenceAsync(500);
+        Devices = await _repo.ListDevicePresenceDedupedForAdminAsync(500);
         OnlineCount = Devices.Count(IsRowOnlineOnMap);
         OfflineCount = Devices.Count - OnlineCount;
     }

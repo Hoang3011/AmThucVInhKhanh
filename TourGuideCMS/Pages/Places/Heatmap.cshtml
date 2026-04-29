@@ -1,0 +1,76 @@
+@page "{id:int}"
+@model TourGuideCMS.Pages.Places.HeatmapModel
+@{
+    var placeName = Model.Place?.Name ?? $"POI #{Model.Id}";
+    ViewData["Title"] = $"Heatmap POI - {placeName}";
+}
+
+<h1>Heatmap theo quán/POI</h1>
+<p>
+    <strong>@placeName</strong>
+    @if (Model.Place is not null)
+    {
+        <span class="text-muted">(@Model.Place.Latitude.ToString("F5"), @Model.Place.Longitude.ToString("F5"))</span>
+    }
+    · Bán kính gom điểm: <strong>@Model.RadiusMeters.ToString("F0")m</strong>
+    · <strong>@Model.MatchedDeviceCount</strong> thiết bị
+    · <strong>@Model.MatchedPointCount</strong> điểm
+    · <strong>@Model.TotalPlays</strong> lượt vào quán
+    · <a asp-page="Index">← Danh sách POI</a>
+</p>
+
+@if (Model.PlayBySource.Count > 0)
+{
+    <p class="mb-2">
+        Nguồn vào quán:
+        @foreach (var s in Model.PlayBySource)
+        {
+            <span class="badge text-bg-light border me-1">@s.Source: @s.Count</span>
+        }
+    </p>
+}
+
+@if (Model.MatchedPointCount == 0)
+{
+    <p class="alert alert-warning">Chưa có đủ dữ liệu tuyến quanh POI này để tạo heatmap.</p>
+}
+
+<div id="poiHeatMap" style="height: 560px; width: 100%; border-radius: 12px; border: 1px solid #ddd;"></div>
+
+@section Scripts {
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <script>
+        (function () {
+            var placeLat = @((Model.Place?.Latitude ?? 10.7625).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            var placeLng = @((Model.Place?.Longitude ?? 106.705).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            var radius = @Model.RadiusMeters.ToString("F0", System.Globalization.CultureInfo.InvariantCulture);
+            var pts = @Html.Raw(Model.HeatPointsJson);
+            var heatPts = Array.isArray(pts) ? pts : [];
+
+            var map = L.map('poiHeatMap').setView([placeLat, placeLng], 17);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
+                attribution: '&copy; OSM &copy; CARTO', subdomains: 'abcd'
+            }).addTo(map);
+
+            L.circle([placeLat, placeLng], {
+                radius: radius,
+                color: '#0d6efd',
+                weight: 2,
+                fillColor: '#0d6efd',
+                fillOpacity: 0.08
+            }).addTo(map);
+            L.circleMarker([placeLat, placeLng], {
+                radius: 7, color: '#0d6efd', fillColor: '#0d6efd', fillOpacity: 0.9
+            }).addTo(map).bindTooltip('POI trung tam');
+
+            if (heatPts.length > 0) {
+                L.heatLayer(heatPts, { radius: 24, blur: 16, maxZoom: 18 }).addTo(map);
+                var flat = heatPts.map(function (p) { return [p[0], p[1]]; });
+                flat.push([placeLat, placeLng]);
+                map.fitBounds(flat, { padding: [28, 28] });
+            }
+        })();
+    </script>
+}
