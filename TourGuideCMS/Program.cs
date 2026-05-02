@@ -371,7 +371,8 @@ app.MapPost("/api/plays/log", async (HttpRequest req, CustomerAccountRepository 
     return Results.Ok(new { ok = true });
 });
 
-// Nghe thử web: tối đa 3 lần mỗi thiết bị cho từng quán + ngôn ngữ.
+// Nghe thử web: giới hạn 3 lượt/thiết bị/quán/ngôn ngữ do trình duyệt (localStorage) thực thi.
+// API này dùng khi còn mạng: trả nội dung + ghi log; không chặn theo DB (tránh mất thuyết minh khi máy chủ tắt / offline).
 app.MapPost("/api/listen/preview/play", async (HttpRequest req, PlaceRepository places, CustomerAccountRepository repo) =>
 {
     var body = await System.Text.Json.JsonSerializer.DeserializeAsync<PreviewListenBody>(
@@ -406,8 +407,6 @@ app.MapPost("/api/listen/preview/play", async (HttpRequest req, PlaceRepository 
     const string source = "WebPreviewAll";
     const int limit = 3;
     var count = await repo.CountPlaysByDevicePlaceLanguageAsync(source, deviceId, place.Name, language);
-    if (count >= limit)
-        return Results.Json(new { ok = false, message = "Đã hết 3 lượt nghe thử cho ngôn ngữ này.", remaining = 0 });
 
     await repo.AddPlayAsync(
         customerUserId: null,

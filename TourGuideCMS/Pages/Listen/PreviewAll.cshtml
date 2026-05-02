@@ -8,7 +8,8 @@
 <div class="container py-3" style="max-width: 980px;">
     <h3 class="mb-2">Nghe thử thuyết minh tất cả quán</h3>
     <p class="small text-muted mb-3">
-        Mỗi thiết bị được nghe tối đa <strong>3 lần / ngôn ngữ / quán</strong>. Khi hết lượt, vui lòng tải app để nghe không giới hạn.
+        Mỗi thiết bị được nghe tối đa <strong>3 lần / ngôn ngữ / quán</strong> (đếm trên trình duyệt này). Khi hết lượt, vui lòng tải app để nghe không giới hạn.
+        <span class="d-block mt-1">Sau khi đã tải trang <strong>ít nhất một lần khi máy chủ còn bật</strong>, bạn vẫn có thể mở lại và nghe thuyết minh khi tắt CMS hoặc mất mạng (cùng thiết bị, cùng trình duyệt đã lưu bản sao trang).</span>
     </p>
     <div id="previewAlert" class="alert alert-info py-2 small d-none"></div>
 
@@ -42,6 +43,8 @@
     </div>
 </div>
 
+<script id="preview-poi-json" type="application/json">@Html.Raw(Model.PlacesJson)</script>
+
 @section Scripts {
     <script>
         (function () {
@@ -53,6 +56,48 @@
             }
             window.webPreviewDeviceId = id;
         })();
+
+        var PREVIEW_POIS = [];
+        (function loadPois() {
+            var el = document.getElementById('preview-poi-json');
+            if (!el || !el.textContent) return;
+            try { PREVIEW_POIS = JSON.parse(el.textContent); } catch (e) { PREVIEW_POIS = []; }
+        })();
+
+        function previewCountKey(placeId, lang) {
+            return 'vk_pv_cnt_v1_' + placeId + '_' + (lang || '').toLowerCase();
+        }
+
+        function getPlayCount(placeId, lang) {
+            var v = localStorage.getItem(previewCountKey(placeId, lang));
+            var n = parseInt(v || '0', 10);
+            return isNaN(n) ? 0 : n;
+        }
+
+        function setPlayCount(placeId, lang, n) {
+            localStorage.setItem(previewCountKey(placeId, lang), String(Math.max(0, n)));
+        }
+
+        function findPlace(placeId) {
+            for (var i = 0; i < PREVIEW_POIS.length; i++) {
+                if (PREVIEW_POIS[i].id === placeId) return PREVIEW_POIS[i];
+            }
+            return null;
+        }
+
+        function resolvePreviewText(place, lang) {
+            var language = (lang || 'vi').trim().toLowerCase();
+            var text = '';
+            if (language === 'vi') text = place.vi || '';
+            else if (language === 'en') text = place.en || '';
+            else if (language === 'zh') text = place.zh || '';
+            else if (language === 'ja') text = place.ja || '';
+            if (!text || !String(text).trim()) {
+                var v = place.vi && String(place.vi).trim();
+                text = v ? place.vi : (place.desc || '');
+            }
+            return String(text || '').trim();
+        }
 
         function speakText(text, language) {
             if (!window.speechSynthesis) return false;
@@ -67,46 +112,84 @@
             return true;
         }
 
+        function tryLogPlayToServer(placeId, language) {
+            if (!navigator.onLine || !window.webPreviewDeviceId) return;
+            var payload = JSON.stringify({
+                placeId: placeId,
+                language: language,
+                deviceInstallId: window.webPreviewDeviceId
+            });
+            fetch('/api/listen/preview/play', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: payload,
+                keepalive: true
+            }).catch(function () { });
+        }
+
+        function updateRemainForPlace(placeId) {
+            var remainEl = document.getElementById('remain-' + placeId);
+            if (!remainEl) return;
+            var vi = Math.max(0, 3 - getPlayCount(placeId, 'vi'));
+            var en = Math.max(0, 3 - getPlayCount(placeId, 'en'));
+            var zh = Math.max(0, 3 - getPlayCount(placeId, 'zh'));
+            var ja = Math.max(0, 3 - getPlayCount(placeId, 'ja'));
+            remainEl.textContent = 'Còn lượt trên trình duyệt này — Vi: ' + vi + ' · En: ' + en + ' · 中: ' + zh + ' · 日: ' + ja + ' (mỗi cột tối đa 3).';
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            for (var i = 0; i < PREVIEW_POIS.length; i++) {
+                updateRemainForPlace(PREVIEW_POIS[i].id);
+            }
+        });
+
         async function listen(placeId, language) {
             var alertBox = document.getElementById('previewAlert');
-            alertBox.className = 'alert alert-info py-2 small';
-            alertBox.textContent = 'Đang tải nội dung nghe thử...';
-            alertBox.classList.remove('d-none');
-            try {
-                var res = await fetch('/api/listen/preview/play', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        placeId: placeId,
-                        language: language,
-                        deviceInstallId: window.webPreviewDeviceId || ''
-                    })
-                });
-                var data = await res.json();
-                if (!res.ok || !data.ok) {
-                    alertBox.className = 'alert alert-warning py-2 small';
-                    alertBox.textContent = data.message || 'Không thể phát nội dung lúc này.';
-                    return;
-                }
-
-                var textEl = document.getElementById('text-' + placeId);
-                if (textEl) {
-                    textEl.textContent = data.text || '';
-                }
-
-                var spoken = speakText(data.text || '', language);
-                alertBox.className = 'alert alert-success py-2 small';
-                alertBox.textContent = (spoken ? 'Đang phát: ' : 'Đã hiển thị nội dung: ')
-                    + data.placeName + ' (' + language + '). Còn ' + data.remaining + ' lượt.';
-
-                var remainEl = document.getElementById('remain-' + placeId);
-                if (remainEl) {
-                    remainEl.textContent = 'Ngôn ngữ ' + language + ': còn ' + data.remaining + '/3 lượt trên thiết bị này.';
-                }
-            } catch (e) {
+            var place = findPlace(placeId);
+            if (!place) {
                 alertBox.className = 'alert alert-warning py-2 small';
-                alertBox.textContent = 'Lỗi mạng, vui lòng thử lại.';
+                alertBox.classList.remove('d-none');
+                alertBox.textContent = 'Không tìm thấy dữ liệu quán trên trang.';
+                return;
             }
+
+            var used = getPlayCount(placeId, language);
+            if (used >= 3) {
+                alertBox.className = 'alert alert-warning py-2 small';
+                alertBox.classList.remove('d-none');
+                alertBox.textContent = 'Đã hết 3 lượt nghe thử cho ngôn ngữ này trên thiết bị này. Vui lòng tải app để nghe không giới hạn.';
+                updateRemainForPlace(placeId);
+                return;
+            }
+
+            var text = resolvePreviewText(place, language);
+            if (!text) {
+                alertBox.className = 'alert alert-warning py-2 small';
+                alertBox.classList.remove('d-none');
+                alertBox.textContent = 'POI chưa có nội dung cho ngôn ngữ này.';
+                return;
+            }
+
+            setPlayCount(placeId, language, used + 1);
+            var remaining = Math.max(0, 3 - getPlayCount(placeId, language));
+
+            var textEl = document.getElementById('text-' + placeId);
+            if (textEl) textEl.textContent = text;
+
+            var spoken = speakText(text, language);
+            alertBox.className = 'alert alert-success py-2 small';
+            alertBox.classList.remove('d-none');
+            alertBox.textContent = (spoken ? 'Đang phát: ' : 'Đã hiển thị nội dung: ')
+                + (place.name || '') + ' (' + language + '). Còn ' + remaining + ' lượt.';
+
+            updateRemainForPlace(placeId);
+            tryLogPlayToServer(placeId, language);
+        }
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function () {
+                navigator.serviceWorker.register('/vk-preview-sw.js').catch(function () { });
+            });
         }
     </script>
 }
