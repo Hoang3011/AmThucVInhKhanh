@@ -354,11 +354,18 @@ app.MapPost("/api/plays/log", async (HttpRequest req, CustomerAccountRepository 
     if (body is null)
         return Results.BadRequest(new { message = "Body không hợp lệ." });
 
+    static bool HasUnexpandedTemplate(string? s) =>
+        !string.IsNullOrEmpty(s) && (s.Contains("${", StringComparison.Ordinal) || s.Contains("{{", StringComparison.Ordinal));
+
+    if (HasUnexpandedTemplate(body.PlaceName) || HasUnexpandedTemplate(body.Language)
+        || HasUnexpandedTemplate(body.DeviceInstallId) || HasUnexpandedTemplate(body.DeviceName))
+        return Results.BadRequest(new { message = "Dữ liệu có biến JMeter chưa thay (vd ${placeName}). Kiểm tra CSV Data Set hoặc body JSON." });
+
     DateTime played = DateTime.UtcNow;
     if (!string.IsNullOrWhiteSpace(body.PlayedAtUtc) && DateTime.TryParse(body.PlayedAtUtc, out var parsed))
         played = parsed.ToUniversalTime();
 
-    await repo.AddPlayAsync(
+    var samePoiReceiveOrder = await repo.AddPlayAsync(
         body.CustomerUserId,
         body.DeviceInstallId,
         body.DeviceName,
@@ -368,7 +375,13 @@ app.MapPost("/api/plays/log", async (HttpRequest req, CustomerAccountRepository 
         body.DurationSeconds,
         played);
 
-    return Results.Ok(new { ok = true });
+    return Results.Json(new
+    {
+        ok = true,
+        samePoiReceiveOrder,
+        placeName = body.PlaceName,
+        deviceInstallId = body.DeviceInstallId
+    });
 });
 
 // Nghe thử web: giới hạn 3 lượt/thiết bị/quán/ngôn ngữ do trình duyệt (localStorage) thực thi.
@@ -416,7 +429,8 @@ app.MapPost("/api/listen/preview/play", async (HttpRequest req, PlaceRepository 
         source: source,
         language: language,
         durationSeconds: null,
-        playedAtUtc: DateTime.UtcNow);
+        playedAtUtc: DateTime.UtcNow,
+        trackSamePoiSequence: false);
 
     var remaining = Math.Max(0, limit - (count + 1));
     return Results.Json(new

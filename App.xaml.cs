@@ -9,6 +9,18 @@ namespace TourGuideApp2
     {
         private static readonly DateTime StartedUtc = DateTime.UtcNow;
 
+        /// <summary>Kết quả giả lập kiểm tra cấu hình (0 mạnh / 1 yếu), gán sau lần chạy đầu tiên trong phiên.</summary>
+        public static int? SimulatedDeviceConfigTier { get; private set; }
+
+        /// <summary>Dùng khi <see cref="OnStart"/> chưa kịp gán (edge case) — đảm bảo một giá trị cho UI/thông báo.</summary>
+        public static int GetOrAssignSimulatedDeviceConfigTier()
+        {
+            if (SimulatedDeviceConfigTier is int t)
+                return t;
+            SimulatedDeviceConfigTier = DeviceConfigSimulator.SimulateRandomDeviceTier();
+            return SimulatedDeviceConfigTier.Value;
+        }
+
         public App()
         {
             InitializeComponent();
@@ -52,6 +64,17 @@ namespace TourGuideApp2
         protected override void OnStart()
         {
             base.OnStart();
+            try
+            {
+                SimulatedDeviceConfigTier = DeviceConfigSimulator.SimulateRandomDeviceTier();
+                System.Diagnostics.Debug.WriteLine(
+                    $"[DeviceConfigSimulator] tier={SimulatedDeviceConfigTier} — {DeviceConfigSimulator.DescribeTierVi(SimulatedDeviceConfigTier.Value)}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"DeviceConfigSimulator: {ex}");
+            }
+
             try
             {
                 CustomerAppWarmSyncService.Schedule();

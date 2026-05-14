@@ -110,6 +110,17 @@ public sealed class CustomerAccountRepository
             await idx.ExecuteNonQueryAsync();
         }
 
+        await using (var seqTbl = connection.CreateCommand())
+        {
+            seqTbl.CommandText = """
+                CREATE TABLE IF NOT EXISTS NarrationPlayPlaceSeq (
+                    PlaceName TEXT NOT NULL PRIMARY KEY,
+                    NextSeq INTEGER NOT NULL
+                );
+                """;
+            await seqTbl.ExecuteNonQueryAsync();
+        }
+
         await EnsurePoiPremiumPaymentSchemaAsync(connection);
         await EnsureDeviceHeartbeatSchemaAsync(connection);
     }
@@ -404,44 +415,83 @@ public sealed class CustomerAccountRepository
         return (true, "Đăng nhập thành công.", new CustomerUserRow(id, fullName, email, password, created));
     }
 
-    public async Task AddPlayAsync(int? customerUserId, string? deviceInstallId, string? deviceName, string placeName, string source, string? language,
-        double? durationSeconds, DateTime playedAtUtc)
+    /// <returns>Thứ tự server nhận log cho cùng <paramref name="placeName"/> (1,2,3,…). 0 nếu không ghi hoặc <paramref name="trackSamePoiSequence"/> = false.</returns>
+    public async Task<int> AddPlayAsync(int? customerUserId, string? deviceInstallId, string? deviceName, string placeName, string source, string? language,
+        double? durationSeconds, DateTime playedAtUtc, bool trackSamePoiSequence = true)
     {
         placeName = (placeName ?? string.Empty).Trim();
         source = (source ?? string.Empty).Trim();
         deviceInstallId = (deviceInstallId ?? string.Empty).Trim();
         deviceName = (deviceName ?? string.Empty).Trim();
         if (string.IsNullOrEmpty(placeName) || string.IsNullOrEmpty(source))
-            return;
+            return 0;
 
         await using var connection = Open();
         await EnsureSchemaAsync(connection);
 
-        int? uid = customerUserId;
-        if (uid.HasValue)
-        {
-            await using var ck = connection.CreateCommand();
-            ck.CommandText = "SELECT COUNT(1) FROM CustomerUser WHERE Id = @id";
-            ck.Parameters.AddWithValue("@id", uid.Value);
-            var exists = Convert.ToInt32(await ck.ExecuteScalarAsync()) > 0;
-            if (!exists)
-                uid = null;
-        }
+        await using var tx = (SqliteTransaction)await connection.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
 
-        await using var cmd = connection.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO NarrationPlay (CustomerUserId, DeviceInstallId, DeviceName, PlaceName, Source, Language, DurationSeconds, PlayedAtUtc)
-            VALUES (@u, @di, @dn, @p, @s, @l, @d, @t)
-            """;
-        cmd.Parameters.AddWithValue("@u", uid.HasValue ? uid.Value : DBNull.Value);
-        cmd.Parameters.AddWithValue("@di", string.IsNullOrWhiteSpace(deviceInstallId) ? DBNull.Value : deviceInstallId);
-        cmd.Parameters.AddWithValue("@dn", string.IsNullOrWhiteSpace(deviceName) ? DBNull.Value : deviceName);
-        cmd.Parameters.AddWithValue("@p", placeName);
-        cmd.Parameters.AddWithValue("@s", source);
-        cmd.Parameters.AddWithValue("@l", language ?? (object)DBNull.Value);
-        cmd.Parameters.AddWithValue("@d", durationSeconds.HasValue ? durationSeconds.Value : DBNull.Value);
-        cmd.Parameters.AddWithValue("@t", playedAtUtc.ToUniversalTime().ToString("O"));
-        await cmd.ExecuteNonQueryAsync();
+        try
+        {
+            int samePoiOrder = 0;
+            if (trackSamePoiSequence)
+            {
+                await using (var seqBump = connection.CreateCommand())
+                {
+                    seqBump.Transaction = tx;
+                    seqBump.CommandText = """
+                        INSERT INTO NarrationPlayPlaceSeq (PlaceName, NextSeq) VALUES (@p, 1)
+                        ON CONFLICT(PlaceName) DO UPDATE SET NextSeq = NarrationPlayPlaceSeq.NextSeq + 1
+                        """;
+                    seqBump.Parameters.AddWithValue("@p", placeName);
+                    await seqBump.ExecuteNonQueryAsync();
+                }
+
+                await using (var seqRead = connection.CreateCommand())
+                {
+                    seqRead.Transaction = tx;
+                    seqRead.CommandText = "SELECT NextSeq FROM NarrationPlayPlaceSeq WHERE PlaceName = @p";
+                    seqRead.Parameters.AddWithValue("@p", placeName);
+                    samePoiOrder = Convert.ToInt32(await seqRead.ExecuteScalarAsync() ?? 0);
+                }
+            }
+
+            int? uid = customerUserId;
+            if (uid.HasValue)
+            {
+                await using var ck = connection.CreateCommand();
+                ck.Transaction = tx;
+                ck.CommandText = "SELECT COUNT(1) FROM CustomerUser WHERE Id = @id";
+                ck.Parameters.AddWithValue("@id", uid.Value);
+                var exists = Convert.ToInt32(await ck.ExecuteScalarAsync()) > 0;
+                if (!exists)
+                    uid = null;
+            }
+
+            await using var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO NarrationPlay (CustomerUserId, DeviceInstallId, DeviceName, PlaceName, Source, Language, DurationSeconds, PlayedAtUtc)
+                VALUES (@u, @di, @dn, @p, @s, @l, @d, @t)
+                """;
+            cmd.Parameters.AddWithValue("@u", uid.HasValue ? uid.Value : DBNull.Value);
+            cmd.Parameters.AddWithValue("@di", string.IsNullOrWhiteSpace(deviceInstallId) ? DBNull.Value : deviceInstallId);
+            cmd.Parameters.AddWithValue("@dn", string.IsNullOrWhiteSpace(deviceName) ? DBNull.Value : deviceName);
+            cmd.Parameters.AddWithValue("@p", placeName);
+            cmd.Parameters.AddWithValue("@s", source);
+            cmd.Parameters.AddWithValue("@l", language ?? (object)DBNull.Value);
+            cmd.Parameters.AddWithValue("@d", durationSeconds.HasValue ? durationSeconds.Value : DBNull.Value);
+            cmd.Parameters.AddWithValue("@t", playedAtUtc.ToUniversalTime().ToString("O"));
+            await cmd.ExecuteNonQueryAsync();
+
+            await tx.CommitAsync();
+            return samePoiOrder;
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
     }
 
     public async Task<int> CountPlaysByDevicePlaceLanguageAsync(string source, string deviceInstallId, string placeName, string language)
@@ -828,7 +878,40 @@ public sealed class CustomerAccountRepository
         return list;
     }
 
-    /// <summary>Tổng lượt phát theo địa điểm và nguồn (QR, Map, …).</summary>
+    /// <summary>
+    /// Hai dòng tổng đầu bảng Lượt phát: (1) mọi lượt nghe trong DB; (2) chỉ nguồn QR.
+    /// Đếm trên toàn bộ <c>NarrationPlay</c>, không gom theo PlaceName — mỗi lần có log là tổng tăng.
+    /// </summary>
+    public async Task<IReadOnlyList<PlayAggregateRow>> GetPlayAggregateSummaryRowsAsync()
+    {
+        await using var connection = Open();
+        await EnsureSchemaAsync(connection);
+
+        int totalAll;
+        await using (var totalCmd = connection.CreateCommand())
+        {
+            totalCmd.CommandText = "SELECT COUNT(*) FROM NarrationPlay";
+            totalAll = Convert.ToInt32(await totalCmd.ExecuteScalarAsync());
+        }
+
+        int totalQr;
+        await using (var qrCmd = connection.CreateCommand())
+        {
+            qrCmd.CommandText = """
+                SELECT COUNT(*) FROM NarrationPlay
+                WHERE LOWER(TRIM(COALESCE(Source, ''))) = 'qr'
+                """;
+            totalQr = Convert.ToInt32(await qrCmd.ExecuteScalarAsync());
+        }
+
+        return new List<PlayAggregateRow>
+        {
+            new("Tổng lượt nghe", "Mọi nguồn", totalAll, IsSummaryRow: true),
+            new("Tổng lượt nghe", "QR", totalQr, IsSummaryRow: true)
+        };
+    }
+
+    /// <summary>Tổng lượt phát theo địa điểm và nguồn (QR, Map, …), bỏ PlaceName placeholder trong DB.</summary>
     public async Task<IReadOnlyList<PlayAggregateRow>> GetAggregatesByPlaceAsync()
     {
         await using var connection = Open();
@@ -839,6 +922,10 @@ public sealed class CustomerAccountRepository
         cmd.CommandText = """
             SELECT PlaceName, Source, COUNT(*) AS Cnt
             FROM NarrationPlay
+            WHERE TRIM(COALESCE(PlaceName, '')) <> ''
+              AND TRIM(PlaceName) <> '—'
+              AND TRIM(PlaceName) <> '---'
+              AND TRIM(PlaceName) <> 'TÊN_QUÁN_CỐ_ĐỊNH'
             GROUP BY PlaceName, Source
             ORDER BY Cnt DESC, PlaceName, Source
             """;
@@ -1152,7 +1239,7 @@ public sealed record NarrationPlayRow(
     DateTime PlayedAtUtc,
     string? CustomerAccount);
 
-public sealed record PlayAggregateRow(string PlaceName, string Source, int Count);
+public sealed record PlayAggregateRow(string PlaceName, string Source, int Count, bool IsSummaryRow = false);
 
 public sealed record PremiumRevenueByPlaceRow(int PlaceId, double TotalVnd, int PaymentCount);
 

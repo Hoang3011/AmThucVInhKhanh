@@ -69,6 +69,8 @@ public class HeatmapModel : PageModel
 
         PlayBySource = await _accounts.GetAggregatesForPlaceAsync(Place.Name);
         TotalPlays = PlayBySource.Sum(x => x.Count);
+        // Nhân 2 lượt nghe
+        // TotalPlays = PlayBySource.Sum(x => x.Count) * 2;
         return Page();
     }
 

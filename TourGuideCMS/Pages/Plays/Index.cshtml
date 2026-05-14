@@ -48,8 +48,8 @@
     <tbody>
     @foreach (var row in Model.Aggregates)
     {
-        <tr class="@(row.Source.Equals("QR", StringComparison.OrdinalIgnoreCase) ? "table-warning" : null)">
-            <td>@row.PlaceName</td>
+        <tr class="@(row.IsSummaryRow || row.Source.Equals("QR", StringComparison.OrdinalIgnoreCase) ? "table-warning" : null)">
+            <td>@IndexModel.SanitizePlaceOrLanguage(row.PlaceName)</td>
             <td><span class="badge bg-secondary">@row.Source</span></td>
             <td><strong>@row.Count</strong></td>
         </tr>
@@ -81,13 +81,14 @@
         {
             <tr>
                 <td>@p.PlayedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
-                <td>@p.PlaceName</td>
+                <td>@IndexModel.SanitizePlaceOrLanguage(p.PlaceName)</td>
                 <td>@p.Source</td>
-                <td>@(p.Language ?? "-")</td>
+                <td>@IndexModel.SanitizePlaceOrLanguage(p.Language)</td>
                 <td>@(p.DurationSeconds?.ToString("0.#") ?? "-")</td>
                 <td>@(p.CustomerAccount ?? "—")</td>
                 <td>
-                    @if (!string.IsNullOrWhiteSpace(p.DeviceInstallId))
+                    @if (!string.IsNullOrWhiteSpace(p.DeviceInstallId)
+                        && !IndexModel.IsJmeterLikeDevice(p.DeviceInstallId, p.DeviceName))
                     {
                         <span>@(string.IsNullOrWhiteSpace(p.DeviceName) ? "Thiết bị" : p.DeviceName)</span>
                         <br />

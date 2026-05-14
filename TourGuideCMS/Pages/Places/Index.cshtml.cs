@@ -35,7 +35,9 @@ public class IndexModel : PageModel
         var agg = await _accounts.GetAggregatesByPlaceAsync();
         var byName = agg
             .GroupBy(x => x.PlaceName, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.Sum(x => x.Count), StringComparer.OrdinalIgnoreCase);
+           .ToDictionary(g => g.Key, g => g.Sum(x => x.Count), StringComparer.OrdinalIgnoreCase);
+        // nhân 2
+        // .ToDictionary(g => g.Key, g => g.Sum(x => x.Count) * 2, StringComparer.OrdinalIgnoreCase);
 
         VisitCountByPlaceId = Places.ToDictionary(
             p => p.Id,

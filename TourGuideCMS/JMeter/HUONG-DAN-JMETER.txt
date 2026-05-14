@@ -1,0 +1,43 @@
+JMeter — POST /api/plays/log (đúng tên quán, 4 ngôn ngữ, mã thiết bị thật)
+================================================================
+
+1) File CSV (đã có sẵn trong thư mục này)
+   - plays-log-load.csv
+   - Cột: placeName, language, deviceInstallId, deviceName
+   - Ngôn ngữ: vi, en, zh, ja
+   - Mã thiết bị: lấy từ CMS /Devices/Online (cột "Mã thiết bị").
+   - Tên quán: đã điền theo dữ liệu từng xuất hiện trên /Plays. Nếu DB của bạn khác:
+     mở https://<cms>/api/places → copy chính xác từng trường "name" và sửa CSV (UTF-8).
+
+2) Trong JMeter
+   - Thread Group → Add → Config Element → CSV Data Set Config
+     * Filename: chọn đường dẫn đầy đủ tới ...\TourGuideCMS\JMeter\plays-log-load.csv
+     * Variable names: placeName,language,deviceInstallId,deviceName
+     * Delimiter: ,
+     * Recycle on EOF: True
+     * Sharing mode: All threads
+   - HTTP Header Manager:
+     * Content-Type = application/json
+     * X-Mobile-Key = <nếu appsettings có App:MobileApiKey>
+   - HTTP Request POST /api/plays/log → tab Body Data: dán nội dung file POST-plays-log-body.json
+     (JMeter sẽ thay ${...} từ CSV — không gõ tay ${placeName} nữa.)
+
+3) Xóa log test lỗi cũ trong SQLite (một lần)
+   DELETE FROM NarrationPlay
+   WHERE PlaceName LIKE '%${%' OR IFNULL(Language,'') LIKE '%${%';
+
+4) Chạy test
+   - 1 thread, 1 loop → View Results Tree → 200 + {"ok":true}
+   - Tăng thread; dùng Summary Report khi load lớn.
+
+5) Test hàng đợi — nhiều thiết bị cùng 1 POI (không cần CSV)
+   Chọn 1 file JSON dưới đây (cùng cấu trúc, khác placeName), copy vào Body Data POST /api/plays/log:
+   - POST-plays-log-body-cung-mot-poi.json  → Ốc Sầu Nơ
+   - same-poi-oc-dao.json                   → Ốc Đào
+   - same-poi-oc-phat.json                  → Ốc Phát
+   - same-poi-oc-vu.json                    → Ốc Vũ
+   - same-poi-banh-flan.json                → Bánh flan cô Năm Vĩnh Khánh
+   - same-poi-oc-thao.json                  → Ốc Thao
+   (Tên trùng plays-log-load.csv; DB khác thì sửa đúng 1 dòng placeName trong file tương ứng.)
+   - Sau sampler: JSON Extractor — recvOrder = $.samePoiReceiveOrder
+   - Response: samePoiReceiveOrder = thứ tự ghi log cho đúng tên quán đó (1,2,3,…).

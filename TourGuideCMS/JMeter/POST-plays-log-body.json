@@ -1,0 +1,8 @@
+{
+  "deviceInstallId": "${deviceInstallId}",
+  "deviceName": "${deviceName}",
+  "placeName": "${placeName}",
+  "source": "QR",
+  "language": "${language}",
+  "durationSeconds": 15
+}

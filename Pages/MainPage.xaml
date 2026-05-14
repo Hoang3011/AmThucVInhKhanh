@@ -9,6 +9,28 @@
         <VerticalStackLayout Padding="20" Spacing="20">
 
             <Border
+                BackgroundColor="#E8F5E9"
+                Stroke="#C8E6C9"
+                StrokeThickness="1"
+                StrokeShape="RoundRectangle 12"
+                Padding="12,10"
+                HorizontalOptions="Fill">
+                <VerticalStackLayout Spacing="4">
+                    <Label
+                        Text="Kiểm tra cấu hình thiết bị (demo)"
+                        FontAttributes="Bold"
+                        FontSize="14"
+                        TextColor="#1B5E20" />
+                    <Label
+                        x:Name="LblDeviceTier"
+                        FontSize="13"
+                        TextColor="#2E7D32"
+                        Text="Đang kiểm tra…"
+                        LineBreakMode="WordWrap" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border
                 BackgroundColor="#FF6200"
                 StrokeShape="RoundRectangle 14"
                 Padding="14,10"

@@ -30,7 +30,10 @@ public class OnlineModel : PageModel
     {
         CutoffUtc = DateTime.UtcNow - OnlineWindow;
         Devices = await _repo.ListDevicePresenceDedupedForAdminAsync(500);
-        OnlineCount = Devices.Count(IsRowOnlineOnMap);
-        OfflineCount = Devices.Count - OnlineCount;
+        // Nhân 2 thiết bị
+       //OnlineCount = Devices.Count(IsRowOnlineOnMap) * 2;
+       // OfflineCount = (Devices.Count * 2) - OnlineCount;
+      OnlineCount = Devices.Count(IsRowOnlineOnMap);
+      OfflineCount = Devices.Count - OnlineCount;
     }
 }

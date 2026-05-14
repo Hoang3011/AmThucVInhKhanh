@@ -1,4 +1,5 @@
-using Microsoft.Maui.ApplicationModel;
+using CommunityToolkit.Maui.Alerts;
+using Microsoft.Maui.Controls;
 using TourGuideApp2.Services;
 
 namespace TourGuideApp2;
@@ -12,13 +13,14 @@ public partial class MainPage : ContentPage
         InitializeComponent();
     }
 
-    protected override void OnAppearing()
+    protected override async void OnAppearing()
     {
         base.OnAppearing();
         try
         {
             _ = PlayAppWelcomeOnceAsync();
             CustomerAppWarmSyncService.Schedule();
+            await DeviceConfigUiPresenter.PresentOnceAsync(LblDeviceTier);
         }
         catch (System.Exception ex)
         {
