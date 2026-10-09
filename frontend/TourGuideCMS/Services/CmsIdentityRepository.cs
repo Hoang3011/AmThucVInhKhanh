@@ -11,8 +11,7 @@ public sealed class CmsIdentityRepository
 
     public CmsIdentityRepository(IWebHostEnvironment env)
     {
-        var appData = Path.Combine(env.ContentRootPath, "App_Data");
-        Directory.CreateDirectory(appData);
+        var appData = DbPaths.ResolveDirectory(env);
         _dbPath = Path.Combine(appData, "VinhKhanh.db");
     }
 

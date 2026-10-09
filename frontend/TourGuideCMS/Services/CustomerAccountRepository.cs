@@ -15,11 +15,10 @@ public sealed class CustomerAccountRepository
 
     public CustomerAccountRepository(IWebHostEnvironment env)
     {
-        var appData = Path.Combine(env.ContentRootPath, "App_Data");
-        Directory.CreateDirectory(appData);
+        var appData = DbPaths.ResolveDirectory(env);
         _dbPath = Path.Combine(appData, "VinhKhanh.db");
 
-        var src = Path.Combine(env.ContentRootPath, "..", "TourGuideApp2", "VinhKhanh.db");
+        var src = DbPaths.SeedDatabasePath(env);
         if (!File.Exists(_dbPath) && File.Exists(src))
             File.Copy(src, _dbPath, overwrite: false);
     }

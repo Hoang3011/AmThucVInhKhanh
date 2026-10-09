@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 Add-Type -AssemblyName System.Speech
 
-$outputDir = "d:\Do An Thuyet Minh Project\Do An Thuyet Minh\Do An Thuyet Minh\TourGuideApp2\Resources\Raw\audio\vi"
+$outputDir = Join-Path $PSScriptRoot "..\Resources\Raw\audio\vi"
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 
 $items = @(
